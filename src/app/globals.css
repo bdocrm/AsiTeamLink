@@ -1,0 +1,191 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --color-background: #ffffff;
+  --color-foreground: #0f172a;
+  --color-surface: #f8fafc;
+  --color-surface-hover: #f1f5f9;
+  --color-border: #e2e8f0;
+  --color-muted: #64748b;
+  --color-primary: #6366f1;
+  --color-primary-hover: #4f46e5;
+  --color-primary-light: #eef2ff;
+  --color-danger: #ef4444;
+  --color-danger-hover: #dc2626;
+  --color-success: #22c55e;
+  --color-warning: #f59e0b;
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+.dark {
+  --color-background: #0f172a !important;
+  --color-foreground: #e2e8f0 !important;
+  --color-surface: #1e293b !important;
+  --color-surface-hover: #334155 !important;
+  --color-border: #334155 !important;
+  --color-muted: #94a3b8 !important;
+  --color-primary: #818cf8 !important;
+  --color-primary-hover: #6366f1 !important;
+  --color-primary-light: #1e1b4b !important;
+  --color-danger: #f87171 !important;
+  --color-danger-hover: #ef4444 !important;
+  --color-success: #4ade80 !important;
+  --color-warning: #fbbf24 !important;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border) transparent;
+}
+
+body {
+  background: var(--color-background);
+  color: var(--color-foreground);
+  font-family: var(--font-sans), Arial, Helvetica, sans-serif;
+}
+
+/* Custom scrollbar for webkit */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-muted);
+}
+
+/* Chat UI fixes: prevent vertical text, stabilize wrapping, and reserve space for fixed input */
+.chat-message__text,
+.message-text,
+.message-content,
+.message-bubble {
+  writing-mode: horizontal-tb !important;
+  transform: none !important;
+  white-space: normal !important;
+  word-break: break-word !important;
+  overflow-wrap: anywhere !important;
+  hyphens: auto;
+}
+
+.chat-layout .messages,
+.chat-messages,
+.messages {
+  min-width: 0;
+  width: 100%;
+}
+
+.chat-input-bar,
+.input-bar,
+.footer-input {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 12px;
+  padding-bottom: calc(12px + env(safe-area-inset-bottom));
+  z-index: 60;
+  background: var(--color-background);
+  backdrop-filter: blur(6px);
+}
+
+.main, .chat-messages, .messages-list {
+  padding-bottom: calc(72px + env(safe-area-inset-bottom));
+}
+
+.mention-suggestions,
+.mention-dropdown {
+  position: fixed;
+  z-index: 70;
+  max-height: 260px;
+  overflow: auto;
+  background: var(--color-surface);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(2,6,23,0.5);
+}
+
+@media (max-width: 640px) {
+  .chat-sidebar {
+    display: none;
+  }
+  .chat-container, .chat-layout {
+    margin: 0;
+    width: 100%;
+  }
+}
+
+/* Mobile: improve message bubble sizing, avatars and input touch targets */
+@media (max-width: 640px) {
+  /* Make message bubbles wider on narrow screens (override Tailwind max-w-[70%]) */
+  .chat-area .max-w-\[70\%\] {
+    max-width: 85% !important;
+  }
+
+  /* Reduce avatar size slightly and keep alignment compact */
+  .chat-area .w-9.h-9 {
+    width: 36px !important;
+    height: 36px !important;
+  }
+
+  /* Increase input tap target and font-size on mobile */
+  .chat-area input[type="text"] {
+    padding: 12px 14px !important;
+    font-size: 15px !important;
+  }
+
+  /* Make mention suggestions full-width with side gutters */
+  .chat-area .mention-suggestions {
+    left: 8px !important;
+    right: 8px !important;
+    width: auto !important;
+    max-width: calc(100% - 16px) !important;
+    box-shadow: 0 8px 30px rgba(2,6,23,0.65);
+  }
+
+  .chat-area .mention-suggestions ul li {
+    padding: 12px !important;
+    font-size: 15px !important;
+  }
+
+  /* Slightly reduce horizontal padding in the main messages area so content gets more room */
+  .chat-area .px-4 {
+    padding-left: 8px !important;
+    padding-right: 8px !important;
+  }
+
+  /* Ensure fixed input doesn't overlap content and increase bottom padding for message list */
+  .chat-area .pb-28 {
+    padding-bottom: calc(88px + env(safe-area-inset-bottom)) !important;
+  }
+
+  /* Make hover-action toolbar more touch friendly */
+  .chat-area .group:hover .group-hover\:flex {
+    display: flex !important;
+  }
+
+  /* Slightly larger send/attach buttons */
+  .chat-area button.p-2\.5 {
+    padding: 10px !important;
+    min-width: 44px !important;
+    min-height: 44px !important;
+  }
+}
+
+/* Force horizontal text inside message bubbles and related inline elements */
+.rounded-lg p,
+.rounded-lg span,
+.rounded-lg a,
+.rounded-lg img {
+  writing-mode: horizontal-tb !important;
+  transform: none !important;
+  white-space: pre-wrap !important;
+  word-break: break-word !important;
+  overflow-wrap: anywhere !important;
+}
