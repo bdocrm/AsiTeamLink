@@ -1,8 +1,9 @@
-import { updateSession } from '@/lib/supabase/middleware';
-import { type NextRequest } from 'next/server';
+import { NextResponse, type NextRequest } from 'next/server';
 
 export async function middleware(request: NextRequest) {
-  return await updateSession(request);
+  // Temporarily disabled for Vercel debugging.
+  // Returning NextResponse.next() so middleware does not block routes.
+  return NextResponse.next();
 }
 
 export const config = {
