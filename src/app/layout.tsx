@@ -16,6 +16,12 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "AsiTeamLink - Internal Team Chat",
   description: "Internal group chat system for BPO teams",
+  icons: {
+    icon: '/companylogo.png',
+    shortcut: '/companylogo.png',
+    apple: '/asiteamlinklogo.png',
+  },
+  manifest: '/site.webmanifest',
 };
 
 export default function RootLayout({

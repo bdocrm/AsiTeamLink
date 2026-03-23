@@ -23,6 +23,9 @@ import {
   AtSign,
   Edit,
   Trash2,
+  Search,
+  Bell,
+  BellOff,
 } from 'lucide-react';
 import type { Channel, Message, User, Reaction } from '@/lib/types';
 import { GifPicker } from './GifPicker';
@@ -146,6 +149,11 @@ export function ChatArea({ channel, showMembers, onToggleMembers }: ChatAreaProp
   const [confirmBox, setConfirmBox] = useState<{ open: boolean; variant?: 'admin-delete' | 'soft-delete'; msg?: Message | null }>({ open: false });
   const [deletingMessageId, setDeletingMessageId] = useState<string | null>(null);
   const [onlineUsers, setOnlineUsers] = useState<Set<string>>(new Set()); // Track online user IDs
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<string[]>([]); // message ids
+  const [activeSearchIndex, setActiveSearchIndex] = useState<number>(0);
+  const [searchFocused, setSearchFocused] = useState(false);
+  const [muted, setMuted] = useState(false);
   const [activeUsersInChannel, setActiveUsersInChannel] = useState<{ id: string; name: string; is_online: boolean }[]>([]); // Users viewing this channel
   const [showChannelMembersManager, setShowChannelMembersManager] = useState(false);
   const [showChannelFilesManager, setShowChannelFilesManager] = useState(false);
@@ -162,6 +170,7 @@ export function ChatArea({ channel, showMembers, onToggleMembers }: ChatAreaProp
 
   const QUICK_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🔥', '🎉', '👏'];
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messageRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const messageInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -169,6 +178,71 @@ export function ChatArea({ channel, showMembers, onToggleMembers }: ChatAreaProp
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, []);
+
+  const scrollToMessage = (messageId: string) => {
+    const el = messageRefs.current[messageId];
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  };
+
+  // Play a short notification sound using WebAudio (no external file)
+  const playNotification = () => {
+    if (muted) return;
+    try {
+      const AudioCtx = (window as any).AudioContext || (window as any).webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.type = 'sine';
+      o.frequency.value = 880;
+      g.gain.value = 0.0001;
+      o.connect(g);
+      g.connect(ctx.destination);
+      const now = ctx.currentTime;
+      g.gain.exponentialRampToValueAtTime(0.12, now + 0.01);
+      o.start(now);
+      g.gain.exponentialRampToValueAtTime(0.0001, now + 0.25);
+      o.stop(now + 0.3);
+      setTimeout(() => { try { ctx.close(); } catch (e) {} }, 500);
+    } catch (e) {
+      // ignore
+    }
+  };
+
+  // Utility to escape search string for regex
+  const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+  // Update search results when query or messages change
+  useEffect(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) {
+      setSearchResults([]);
+      setActiveSearchIndex(0);
+      return;
+    }
+    const ids: string[] = [];
+    for (const m of messages) {
+      if ((m.text && m.text.toLowerCase().includes(q)) || (m.attachment_name && m.attachment_name.toLowerCase().includes(q))) {
+        ids.push(m.id);
+      }
+    }
+    setSearchResults(ids);
+    setActiveSearchIndex(0);
+    // auto-scroll to first match
+    if (ids.length > 0) {
+      setTimeout(() => scrollToMessage(ids[0]), 150);
+    }
+  }, [searchQuery, messages]);
+
+  // Load muted preference from localStorage
+  useEffect(() => {
+    try {
+      const v = localStorage.getItem('asiteam_muted');
+      setMuted(v === '1');
+    } catch (e) {
+      // ignore
+    }
   }, []);
 
   // Top-level handlers for delete confirmation modal
@@ -429,6 +503,11 @@ export function ChatArea({ channel, showMembers, onToggleMembers }: ChatAreaProp
             if (senderArr?.[0]) {
               setUsersMap(prev => ({ ...prev, [senderArr[0].id]: senderArr[0] }));
             }
+          }
+          // Play notification for incoming messages (not from current user)
+          if (newMsg.sender_id !== user?.id) {
+            // Only play when channel is active; respect muted setting
+            playNotification();
           }
         }
       )
@@ -1202,6 +1281,59 @@ export function ChatArea({ channel, showMembers, onToggleMembers }: ChatAreaProp
           <h2 className="font-semibold text-foreground">{channel.name}</h2>
         </div>
         <div className="flex items-center gap-1">
+          {/* Conversation search */}
+          <div className="relative">
+            <input
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onFocus={() => setSearchFocused(true)}
+              onBlur={() => setTimeout(() => setSearchFocused(false), 180)}
+              placeholder="Search in this conversation"
+              className="px-3 py-1.5 rounded-full border border-border bg-surface text-sm w-40 focus:outline-none focus:ring-2 focus:ring-primary/30"
+            />
+            <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted" />
+          </div>
+          {(searchFocused || searchQuery.trim().length > 0) && (
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => {
+                  if (searchResults.length === 0) return;
+                  const prev = (activeSearchIndex - 1 + searchResults.length) % searchResults.length;
+                  setActiveSearchIndex(prev);
+                  scrollToMessage(searchResults[prev]);
+                }}
+                className="p-2 rounded-lg text-muted hover:text-foreground hover:bg-surface-hover"
+                title="Previous match"
+              >
+                ◀
+              </button>
+              <button
+                onClick={() => {
+                  if (searchResults.length === 0) return;
+                  const next = (activeSearchIndex + 1) % searchResults.length;
+                  setActiveSearchIndex(next);
+                  scrollToMessage(searchResults[next]);
+                }}
+                className="p-2 rounded-lg text-muted hover:text-foreground hover:bg-surface-hover"
+                title="Next match"
+              >
+                ▶
+              </button>
+              <div className="text-xs text-muted px-2">{searchResults.length > 0 ? `${activeSearchIndex + 1}/${searchResults.length}` : '0/0'}</div>
+            </div>
+          )}
+          {/* Notification toggle */}
+          <button
+            onClick={() => {
+              const next = !muted;
+              setMuted(next);
+              try { localStorage.setItem('asiteam_muted', next ? '1' : '0'); } catch (e) {}
+            }}
+            title={muted ? 'Unmute notifications' : 'Mute notifications'}
+            className="p-2 rounded-lg text-muted hover:text-foreground hover:bg-surface-hover"
+          >
+            {muted ? <BellOff className="w-5 h-5" /> : <Bell className="w-5 h-5" />}
+          </button>
           <button
             onClick={startCall}
             className={`p-2 rounded-lg transition-colors ${
@@ -1306,9 +1438,10 @@ export function ChatArea({ channel, showMembers, onToggleMembers }: ChatAreaProp
               return (
                 <div
                   key={msg.id}
+                  ref={(el) => { messageRefs.current[msg.id] = el; }}
                   className={`group relative flex gap-3 px-2 py-0.5 hover:bg-surface-hover/50 rounded-lg ${
                     showAvatar ? 'mt-3' : 'mt-0.5'
-                  } ${isOwn ? 'flex-row-reverse items-end' : 'items-start'}`}
+                  } ${isOwn ? 'flex-row-reverse items-end' : 'items-start'} ${searchResults[activeSearchIndex] === msg.id ? 'ring-2 ring-primary/30' : ''}`}
                 >
                   {/* Hover action buttons */}
                   <div className="absolute -top-3 right-2 hidden group-hover:flex items-center gap-0.5 bg-surface border border-border rounded-lg shadow-sm px-1 py-0.5 z-10">
@@ -1449,7 +1582,21 @@ export function ChatArea({ channel, showMembers, onToggleMembers }: ChatAreaProp
                                 <p className="text-sm break-words whitespace-pre-wrap">
                                   {parts.map((part, pi) => {
                                     if (part.type === 'text') {
-                                      return <span key={pi}>{part.value}</span>;
+                                      if (!searchQuery) return <span key={pi}>{part.value}</span>;
+                                      const q = searchQuery.trim().toLowerCase();
+                                      if (!q) return <span key={pi}>{part.value}</span>;
+                                      const tokens = part.value.split(new RegExp(`(${escapeRegExp(q)})`, 'ig'));
+                                      return (
+                                        <span key={pi}>
+                                          {tokens.map((t, ti) => (
+                                            t.toLowerCase() === q ? (
+                                              <span key={ti} className="bg-yellow-200 text-foreground rounded px-0.5">{t}</span>
+                                            ) : (
+                                              <span key={ti}>{t}</span>
+                                            )
+                                          ))}
+                                        </span>
+                                      );
                                     }
                                     if (part.type === 'mention') {
                                       return (

@@ -5,8 +5,8 @@ const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 export function enableClientFetchDebug() {
   if (typeof window === 'undefined' || !window.fetch) return;
   try {
-    const originalFetch = window.fetch.bind(window);
-    window.fetch = async (input: RequestInfo, init?: RequestInit) => {
+    const originalFetch = window.fetch.bind(window) as (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+    window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
       try {
         const url = typeof input === 'string' ? input : input instanceof Request ? input.url : String(input);
         const isSupabase = SUPABASE_URL && url.includes(SUPABASE_URL);

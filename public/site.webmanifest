@@ -1,0 +1,21 @@
+{
+  "name": "AsiTeamLink",
+  "short_name": "AsiTeamLink",
+  "description": "Internal team chat for AsiteamLink.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#6366f1",
+  "icons": [
+    {
+      "src": "/companylogo.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/asiteamlinklogo.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
