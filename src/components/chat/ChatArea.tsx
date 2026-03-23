@@ -1,4 +1,4 @@
-'use client';
+ 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { createClient } from '@/lib/supabase/client';
@@ -28,11 +28,13 @@ import {
   BellOff,
 } from 'lucide-react';
 import type { Channel, Message, User, Reaction } from '@/lib/types';
-import { GifPicker } from './GifPicker';
-import { VideoCall } from './VideoCall';
-import { ChannelMembersManager } from './ChannelMembersManager';
-import { ChannelFilesManager } from './ChannelFilesManager';
+import dynamic from 'next/dynamic';
+const GifPicker = dynamic(() => import('./GifPicker').then((m) => m.GifPicker), { ssr: false });
+const VideoCall = dynamic(() => import('./VideoCall').then((m) => m.VideoCall), { ssr: false });
+const ChannelMembersManager = dynamic(() => import('./ChannelMembersManager').then((m) => m.ChannelMembersManager), { ssr: false });
+const ChannelFilesManager = dynamic(() => import('./ChannelFilesManager').then((m) => m.ChannelFilesManager), { ssr: false });
 import MessageBox from '@/components/ui/MessageBox';
+import { checkText } from '@/lib/languageClient';
 
 interface ChatAreaProps {
   channel: Channel | null;
@@ -133,6 +135,15 @@ export function ChatArea({ channel, showMembers, onToggleMembers }: ChatAreaProp
   const [sending, setSending] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [showGifPicker, setShowGifPicker] = useState(false);
+  const [checksLoading, setChecksLoading] = useState(false);
+  const [suggestions, setSuggestions] = useState<any[]>([]);
+  const [showChecks, setShowChecks] = useState(false);
+  const [checkMode, setCheckMode] = useState<'both' | 'grammar' | 'spelling'>('both');
+  const [checkBeforeSend, setCheckBeforeSend] = useState(false);
+  const [lastAppliedText, setLastAppliedText] = useState<string | null>(null);
+  const [appliedCount, setAppliedCount] = useState<number>(0);
+  const [showUndo, setShowUndo] = useState(false);
+  const undoTimerRef = useRef<number | null>(null);
   const [inCall, setInCall] = useState(false);
   const [activeCall, setActiveCall] = useState<{ startedBy: string } | null>(null);
   const [replyTo, setReplyTo] = useState<Message | null>(null);
@@ -244,6 +255,30 @@ export function ChatArea({ channel, showMembers, onToggleMembers }: ChatAreaProp
       // ignore
     }
   }, []);
+
+  // Load & persist check preferences
+  useEffect(() => {
+    try {
+      const v = localStorage.getItem('asiteam_check_before_send');
+      if (v !== null) setCheckBeforeSend(v === '1');
+      const m = localStorage.getItem('asiteam_check_mode');
+      if (m === 'grammar' || m === 'spelling' || m === 'both') setCheckMode(m as any);
+    } catch (e) {
+      // ignore
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('asiteam_check_before_send', checkBeforeSend ? '1' : '0');
+    } catch (e) {}
+  }, [checkBeforeSend]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('asiteam_check_mode', checkMode);
+    } catch (e) {}
+  }, [checkMode]);
 
   // Top-level handlers for delete confirmation modal
   const handleDelete = async (msg: Message) => {
@@ -379,11 +414,14 @@ export function ChatArea({ channel, showMembers, onToggleMembers }: ChatAreaProp
 
     const fetchMessages = async () => {
       try {
+        // Fetch most recent messages (limit) and reverse to ascending order
+        const LIMIT = 200;
         const { data, error } = await supabase
           .from('messages')
           .select('*')
           .eq('channel_id', channel.id)
-          .order('created_at', { ascending: true });
+          .order('created_at', { ascending: false })
+          .range(0, LIMIT - 1);
 
         if (error) {
           console.error('Failed to fetch messages', error);
@@ -392,10 +430,11 @@ export function ChatArea({ channel, showMembers, onToggleMembers }: ChatAreaProp
 
         if (!data || !mounted) return;
 
-        setMessages(data as Message[]);
+        const msgs = Array.isArray(data) ? (data as Message[]).slice().reverse() : (data as Message[]);
+        setMessages(msgs as Message[]);
 
         // Populate usersMap for senders found in the fetched messages
-        const senderIds = Array.from(new Set((data as Message[]).map(m => m.sender_id).filter(Boolean)));
+        const senderIds = Array.from(new Set(msgs.map(m => m.sender_id).filter(Boolean)));
         const fetchedUsers: Record<string, User> = {};
         for (const id of senderIds) {
           try {
@@ -755,6 +794,91 @@ export function ChatArea({ channel, showMembers, onToggleMembers }: ChatAreaProp
     });
   };
 
+  const handleCheck = async (mode = checkMode) => {
+    const t = text || '';
+    if (!t.trim()) return [];
+    setChecksLoading(true);
+    setShowChecks(false);
+    try {
+      const json = await checkText(t);
+      let matches = json.matches || [];
+      if (mode === 'grammar') {
+        matches = matches.filter((m: any) => (m.rule && String(m.rule.issueType).toLowerCase().includes('grammar')));
+      } else if (mode === 'spelling') {
+        matches = matches.filter((m: any) => (m.rule && String(m.rule.issueType).toLowerCase().includes('misspelling')));
+      }
+      setSuggestions(matches || []);
+      setShowChecks(true);
+      return matches || [];
+    } catch (e) {
+      console.error('Check failed', e);
+      setSuggestions([]);
+      setShowChecks(false);
+      alert('Grammar check failed.');
+      return [];
+    } finally {
+      setChecksLoading(false);
+    }
+  };
+
+  const applySuggestion = async (index: number, replacement: string) => {
+    const match = suggestions[index];
+    if (!match) return;
+    const offset = match.offset || 0;
+    const length = match.length || 0;
+    const before = text.slice(0, offset);
+    const after = text.slice(offset + length);
+    const newText = before + replacement + after;
+    setText(newText);
+    // re-run check to update suggestions
+    setTimeout(() => handleCheck(), 80);
+  };
+
+  const applyAllSuggestions = () => {
+    if (!suggestions || suggestions.length === 0) return;
+    // Save previous text for undo
+    setLastAppliedText(text);
+    // Apply replacements from end to start to preserve offsets
+    const sorted = suggestions.slice().sort((a: any, b: any) => b.offset - a.offset);
+    let newText = text;
+    let applied = 0;
+    for (const m of sorted) {
+      const rep = (m.replacements && m.replacements[0] && (m.replacements[0].value || m.replacements[0])) || null;
+      if (!rep) continue;
+      const off = m.offset || 0;
+      const len = m.length || 0;
+      newText = newText.slice(0, off) + rep + newText.slice(off + len);
+      applied += 1;
+    }
+    setText(newText);
+    setAppliedCount(applied);
+    setShowUndo(true);
+    // clear any existing timer
+    try { if (undoTimerRef.current) window.clearTimeout(undoTimerRef.current); } catch (e) {}
+    // hide undo after 8s
+    undoTimerRef.current = window.setTimeout(() => {
+      setShowUndo(false);
+      setLastAppliedText(null);
+      setAppliedCount(0);
+      undoTimerRef.current = null;
+    }, 8000) as unknown as number;
+    setTimeout(() => handleCheck(), 80);
+  };
+
+  const handleUndoApplyAll = () => {
+    if (undoTimerRef.current) {
+      try { window.clearTimeout(undoTimerRef.current); } catch (e) {}
+      undoTimerRef.current = null;
+    }
+    if (lastAppliedText !== null) {
+      setText(lastAppliedText);
+      setLastAppliedText(null);
+      setShowUndo(false);
+      setAppliedCount(0);
+      setTimeout(() => handleCheck(), 80);
+    }
+  };
+
   const handleReply = (msg: Message) => {
     setReplyTo(msg);
     messageInputRef.current?.focus();
@@ -961,6 +1085,21 @@ export function ChatArea({ channel, showMembers, onToggleMembers }: ChatAreaProp
     if ((!text.trim() && !attachment && !fileAttachment) || !channel || !user || sending) return;
 
     setSending(true);
+    // If user opted to check before send, run checks and stop send if suggestions exist
+    if (checkBeforeSend && text.trim()) {
+      try {
+        const matches = await handleCheck(checkMode);
+        if (matches && matches.length > 0) {
+          // show suggestions and abort send
+          setSending(false);
+          setShowChecks(true);
+          return;
+        }
+      } catch (e) {
+        console.error('Pre-send check failed', e);
+        // allow send to continue on check failure
+      }
+    }
     let attachmentUrl = null;
     let attachmentName = null;
     let attachmentSize: number | null = null;
@@ -1891,6 +2030,63 @@ export function ChatArea({ channel, showMembers, onToggleMembers }: ChatAreaProp
               className="w-full px-4 py-2.5 bg-surface border border-border rounded-lg text-foreground placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition-colors"
             />
 
+            {/* Grammar/spell suggestions */}
+            {showChecks && suggestions.length > 0 && (
+              <div className="mt-2 bg-surface border border-border rounded-lg p-2 max-h-44 overflow-auto">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-xs text-muted">Suggestions ({suggestions.length})</div>
+                  <div className="flex items-center gap-2">
+                    {showUndo ? (
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-muted">Applied {appliedCount} changes</span>
+                        <button
+                          type="button"
+                          onClick={handleUndoApplyAll}
+                          className="px-2 py-1 text-sm border rounded"
+                        >
+                          Undo
+                        </button>
+                      </div>
+                    ) : (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => applyAllSuggestions()}
+                          className="px-2 py-1 text-sm bg-primary/10 text-primary rounded"
+                        >
+                          Apply all
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setShowChecks(false)}
+                          className="px-2 py-1 text-sm border rounded"
+                        >
+                          Dismiss
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+                {suggestions.map((m, idx) => (
+                  <div key={idx} className="mb-2">
+                    <div className="text-xs text-muted">{m.message}</div>
+                    <div className="flex gap-2 mt-1 flex-wrap">
+                      {(m.replacements || []).slice(0, 4).map((r: any, ri: number) => (
+                        <button
+                          key={ri}
+                          type="button"
+                          onClick={() => applySuggestion(idx, r.value || r)}
+                          className="px-2 py-1 text-sm bg-primary/10 text-primary rounded"
+                        >
+                          {r.value || r}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
             {/* Mention suggestions dropdown (render fixed to avoid clipping/z issues) */}
               {mentionOpen && mentionResults.length > 0 && suggestionPos && (
               <div
@@ -1917,6 +2113,33 @@ export function ChatArea({ channel, showMembers, onToggleMembers }: ChatAreaProp
                 </ul>
               </div>
             )}
+          </div>
+          <div className="flex items-center gap-2">
+            <select
+              value={checkMode}
+              onChange={(e) => setCheckMode(e.target.value as any)}
+              className="text-xs px-2 py-1 rounded border border-border bg-surface text-foreground"
+              title="Select check mode"
+            >
+              <option value="both">Both</option>
+              <option value="grammar">Grammar</option>
+              <option value="spelling">Spelling</option>
+            </select>
+
+            <label className="text-xs text-muted flex items-center gap-1">
+              <input type="checkbox" checked={checkBeforeSend} onChange={(e) => setCheckBeforeSend(e.target.checked)} />
+              <span>Check before send</span>
+            </label>
+
+            <button
+              type="button"
+              onClick={() => handleCheck(checkMode)}
+              className="px-2.5 py-2 text-xs font-bold text-muted hover:text-foreground hover:bg-surface-hover rounded-lg transition-colors shrink-0 border border-border mr-1"
+              title="Check spelling / grammar"
+              disabled={checksLoading || !text.trim()}
+            >
+              {checksLoading ? 'Checking...' : 'Check'}
+            </button>
           </div>
           <button
             type="button"
