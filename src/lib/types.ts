@@ -12,6 +12,9 @@ export interface User {
   is_online: boolean;
   theme_preference: ThemePreference;
   created_at: string;
+  last_online_at?: string | null;
+  last_offline_at?: string | null;
+  updated_at?: string;
 }
 
 export interface Campaign {

@@ -82,17 +82,35 @@ SECURITY DEFINER
 AS $$
 DECLARE
   normalized_names text[] := ARRAY(SELECT lower(x) FROM unnest(p_names) x);
+  prefix_patterns text[];
+  contains_patterns text[];
 BEGIN
+  -- build simple prefix/contains patterns from normalized names
+  prefix_patterns := ARRAY(SELECT n || '%' FROM unnest(normalized_names) n);
+  contains_patterns := ARRAY(SELECT '%' || n || '%' FROM unnest(normalized_names) n);
+
   -- Insert mentions for matching users, avoid duplicates via unique index
   INSERT INTO message_mentions (message_id, mentioned_user_id)
   SELECT p_message_id, u.id
   FROM users u
-  WHERE lower(u.name) = ANY(normalized_names)
+  WHERE (
+    lower(u.name) = ANY(normalized_names) -- exact match
+    OR lower(u.name) LIKE ANY(prefix_patterns) -- name starts with the token (e.g. 'dane' -> 'dane del')
+    OR lower(u.email) = ANY(normalized_names)
+    OR lower(u.email) LIKE ANY(contains_patterns)
+  )
   ON CONFLICT DO NOTHING;
 
   -- Return the inserted/matched users
   RETURN QUERY
-    SELECT u.id, u.name FROM users u WHERE lower(u.name) = ANY(normalized_names);
+    SELECT u.id, u.name FROM users u
+    WHERE (
+      lower(u.name) = ANY(normalized_names)
+      OR lower(u.name) LIKE ANY(prefix_patterns)
+      OR lower(u.email) = ANY(normalized_names)
+      OR lower(u.email) LIKE ANY(contains_patterns)
+    )
+  ORDER BY u.name;
 END;
 $$;
 
@@ -134,6 +152,28 @@ GRANT EXECUTE ON FUNCTION get_mentions_for_user(uuid) TO authenticated;
 GRANT EXECUTE ON FUNCTION get_mentions_for_user(uuid) TO anon;
 GRANT EXECUTE ON FUNCTION mark_mention_read(uuid) TO authenticated;
 GRANT EXECUTE ON FUNCTION mark_mention_read(uuid) TO anon;
+
+-- RPC: Create mentions for a message given an array of user IDs (explicit IDs are more reliable)
+CREATE OR REPLACE FUNCTION create_message_mentions_by_ids(p_message_id uuid, p_user_ids uuid[])
+RETURNS TABLE(mentioned_user_id uuid, mentioned_name varchar)
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+BEGIN
+  -- Insert mentions for provided user ids, avoid duplicates via unique index
+  INSERT INTO message_mentions (message_id, mentioned_user_id)
+  SELECT p_message_id, u_id
+  FROM unnest(p_user_ids) u_id
+  ON CONFLICT DO NOTHING;
+
+  -- Return the inserted/matched users
+  RETURN QUERY
+    SELECT u.id, u.name FROM users u WHERE u.id = ANY(p_user_ids);
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION create_message_mentions_by_ids(uuid, uuid[]) TO authenticated;
+GRANT EXECUTE ON FUNCTION create_message_mentions_by_ids(uuid, uuid[]) TO anon;
 
 -- Add tables to publication idempotently
 DO $$

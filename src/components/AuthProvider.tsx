@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 import { createClient } from '@/lib/supabase/client';
+import { enableClientFetchDebug } from '@/lib/clientFetchDebug';
 import type { User } from '@/lib/types';
 
 interface AuthContextType {
@@ -42,6 +43,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   useEffect(() => {
+    // Enable client-side fetch debugging for Supabase requests
+    try { enableClientFetchDebug(); } catch {}
     fetchUser();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(() => {

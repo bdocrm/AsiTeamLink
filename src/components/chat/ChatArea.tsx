@@ -27,6 +27,8 @@ import {
 import type { Channel, Message, User, Reaction } from '@/lib/types';
 import { GifPicker } from './GifPicker';
 import { VideoCall } from './VideoCall';
+import { ChannelMembersManager } from './ChannelMembersManager';
+import { ChannelFilesManager } from './ChannelFilesManager';
 import MessageBox from '@/components/ui/MessageBox';
 
 interface ChatAreaProps {
@@ -65,24 +67,47 @@ function isImageUrl(url: string): boolean {
 }
 
 // Parse message text to find URLs and render them as clickable links + auto-embed images
-function parseMessageContent(text: string): { parts: { type: 'text' | 'link' | 'image'; value: string }[] } {
+// Also highlights @mentions
+function parseMessageContent(text: string): { parts: { type: 'text' | 'link' | 'image' | 'mention'; value: string }[] } {
   const urlRegex = /(https?:\/\/[^\s<]+)/g;
-  const parts: { type: 'text' | 'link' | 'image'; value: string }[] = [];
-  let lastIndex = 0;
+  const mentionRegex = /(@[^\s@,!.?:;]+)/g;
+  const combined: { type: 'url' | 'mention'; value: string; index: number }[] = [];
   let match;
 
+  // Find all URLs
   while ((match = urlRegex.exec(text)) !== null) {
-    // Add text before the URL
-    if (match.index > lastIndex) {
-      parts.push({ type: 'text', value: text.slice(lastIndex, match.index) });
+    combined.push({ type: 'url', value: match[1], index: match.index });
+  }
+
+  // Find all mentions
+  while ((match = mentionRegex.exec(text)) !== null) {
+    combined.push({ type: 'mention', value: match[1], index: match.index });
+  }
+
+  // Sort by index
+  combined.sort((a, b) => a.index - b.index);
+
+  const parts: { type: 'text' | 'link' | 'image' | 'mention'; value: string }[] = [];
+  let lastIndex = 0;
+
+  for (const item of combined) {
+    // Add text before this item
+    if (item.index > lastIndex) {
+      parts.push({ type: 'text', value: text.slice(lastIndex, item.index) });
     }
-    const url = match[1];
-    if (isImageUrl(url)) {
-      parts.push({ type: 'image', value: url });
-    } else {
-      parts.push({ type: 'link', value: url });
+
+    if (item.type === 'url') {
+      const url = item.value;
+      if (isImageUrl(url)) {
+        parts.push({ type: 'image', value: url });
+      } else {
+        parts.push({ type: 'link', value: url });
+      }
+      lastIndex = item.index + item.value.length;
+    } else if (item.type === 'mention') {
+      parts.push({ type: 'mention', value: item.value });
+      lastIndex = item.index + item.value.length;
     }
-    lastIndex = match.index + match[0].length;
   }
 
   // Add remaining text
@@ -119,6 +144,12 @@ export function ChatArea({ channel, showMembers, onToggleMembers }: ChatAreaProp
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editingText, setEditingText] = useState('');
   const [confirmBox, setConfirmBox] = useState<{ open: boolean; variant?: 'admin-delete' | 'soft-delete'; msg?: Message | null }>({ open: false });
+  const [deletingMessageId, setDeletingMessageId] = useState<string | null>(null);
+  const [onlineUsers, setOnlineUsers] = useState<Set<string>>(new Set()); // Track online user IDs
+  const [activeUsersInChannel, setActiveUsersInChannel] = useState<{ id: string; name: string; is_online: boolean }[]>([]); // Users viewing this channel
+  const [showChannelMembersManager, setShowChannelMembersManager] = useState(false);
+  const [showChannelFilesManager, setShowChannelFilesManager] = useState(false);
+  const [duplicateFileConfirm, setDuplicateFileConfirm] = useState<{ show: boolean; fileName: string; file: File | null }>({ show: false, fileName: '', file: null });
 
   // Members for mention-autocomplete
   const [channelMembers, setChannelMembers] = useState<User[]>([]);
@@ -127,6 +158,7 @@ export function ChatArea({ channel, showMembers, onToggleMembers }: ChatAreaProp
   const [mentionAtIndex, setMentionAtIndex] = useState<number | null>(null);
   const [mentionSelectedIndex, setMentionSelectedIndex] = useState(0);
   const [suggestionPos, setSuggestionPos] = useState<{ left: number; top?: number; bottom?: number; width: number } | null>(null);
+  const [mentionSelectedIds, setMentionSelectedIds] = useState<string[]>([]); // track selected mention user ids for the pending message
 
   const QUICK_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🔥', '🎉', '👏'];
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -155,33 +187,43 @@ export function ChatArea({ channel, showMembers, onToggleMembers }: ChatAreaProp
       setConfirmBox({ open: false });
       return;
     }
+    
+    // Prevent duplicate delete requests
+    if (deletingMessageId === target.id) {
+      console.log('Delete already in progress for message:', target.id);
+      return;
+    }
+    
     try {
+      setDeletingMessageId(target.id);
+      console.log('Deleting message:', target.id, target);
       const resp = await fetch('/api/admin/delete-message', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ messageId: target.id }),
       });
-      const json = await resp.json().catch(() => ({}));
-      if (!resp.ok) {
-        console.error('admin delete API error', json);
-        const { error: delErr } = await supabase.from('messages').delete().eq('id', target.id);
-        if (delErr) {
-          alert('Failed to delete message: ' + (json?.error || delErr.message));
-          return;
-        }
-        setMessages(prev => prev.filter(m => m.id !== target.id));
-      } else {
-        setMessages(prev => prev.filter(m => m.id !== target.id));
+      let json: any = {};
+      try {
+        json = await resp.json();
+      } catch (parseErr) {
+        console.error('Failed to parse API response:', parseErr);
       }
-    } catch (e: any) {
-      console.error('admin delete failed', e);
-      const { error: delErr } = await supabase.from('messages').delete().eq('id', target.id);
-      if (delErr) {
-        alert('Failed to delete message: ' + (e?.message || delErr.message));
+      
+      if (!resp.ok) {
+        const errorMsg = json?.error || `HTTP ${resp.status}`;
+        console.error('admin delete API error:', errorMsg, json);
+        alert('Failed to delete message: ' + errorMsg);
         return;
       }
+      
+      console.log('Message deleted successfully');
       setMessages(prev => prev.filter(m => m.id !== target.id));
+    } catch (e: any) {
+      console.error('admin delete failed:', e?.message || String(e), e);
+      alert('Failed to delete message: ' + (e?.message || 'Unknown error'));
+      return;
     } finally {
+      setDeletingMessageId(null);
       setConfirmBox({ open: false });
     }
   };
@@ -310,10 +352,17 @@ export function ChatArea({ channel, showMembers, onToggleMembers }: ChatAreaProp
     let mounted = true;
     const fetchMembers = async () => {
       try {
-        const { data } = await supabase.rpc('get_campaign_members', { campaign_uuid: channel.campaign_id });
-        if (mounted && data) setChannelMembers(data as User[]);
+        const { data, error } = await supabase.rpc('get_campaign_members', { campaign_uuid: channel.campaign_id });
+        if (error) {
+          console.error('Error fetching campaign members for mentions:', error);
+          return;
+        }
+        if (mounted && data) {
+          console.log('Fetched campaign members for mentions:', data);
+          setChannelMembers(data as User[]);
+        }
       } catch (e) {
-        // ignore
+        console.error('Exception fetching campaign members:', e);
       }
     };
     fetchMembers();
@@ -356,7 +405,7 @@ export function ChatArea({ channel, showMembers, onToggleMembers }: ChatAreaProp
     supabase.rpc('mark_channel_read', { p_user_id: user.id, p_channel_id: channel.id });
   }, [messages.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Realtime subscription
+  // Realtime subscription - handle INSERT, UPDATE, DELETE
   useEffect(() => {
     if (!channel) return;
 
@@ -380,6 +429,42 @@ export function ChatArea({ channel, showMembers, onToggleMembers }: ChatAreaProp
             if (senderArr?.[0]) {
               setUsersMap(prev => ({ ...prev, [senderArr[0].id]: senderArr[0] }));
             }
+          }
+        }
+      )
+      // Handle message edits (UPDATE events)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'messages',
+          filter: `channel_id=eq.${channel.id}`,
+        },
+        (payload) => {
+          const updatedMsg = payload.new as Message;
+          setMessages(prev =>
+            prev.map(m => (m.id === updatedMsg.id ? updatedMsg : m))
+          );
+          console.log('Message updated:', updatedMsg.id);
+        }
+      )
+      // Handle message deletes (DELETE events)
+      .on(
+        'postgres_changes',
+        {
+          event: 'DELETE',
+          schema: 'public',
+          table: 'messages',
+        },
+        (payload) => {
+          const deletedMsg = payload.old as Message;
+          // Only update if it's from the current channel
+          if (deletedMsg.channel_id === channel.id) {
+            setMessages(prev =>
+              prev.filter(m => m.id !== deletedMsg.id)
+            );
+            console.log('Message deleted in real-time:', deletedMsg.id);
           }
         }
       )
@@ -429,6 +514,61 @@ export function ChatArea({ channel, showMembers, onToggleMembers }: ChatAreaProp
         Object.values(prev).forEach(v => clearTimeout(v.timer));
         return {};
       });
+    };
+  }, [channel, user]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Presence tracking - show who's viewing this channel
+  useEffect(() => {
+    if (!channel || !user) return;
+
+    const presenceChannel = supabase.channel(`presence:${channel.id}`, {
+      config: {
+        broadcast: { self: true },
+        presence: { key: user.id },
+      },
+    });
+
+    presenceChannel
+      .on('presence', { event: 'sync' }, () => {
+        const state = presenceChannel.presenceState();
+        const activeUsers = Object.values(state).flat() as any[];
+        console.log('Channel presence sync:', activeUsers);
+        
+        setActiveUsersInChannel(
+          activeUsers.map((presence: any) => ({
+            id: presence.user_id || user.id,
+            name: presence.user_name || user.name,
+            is_online: presence.is_online !== false,
+          }))
+        );
+      })
+      .on('presence', { event: 'join' }, ({ key, newPresences }: any) => {
+        console.log('User joined presence:', key, newPresences);
+        setOnlineUsers(prev => new Set([...prev, key]));
+      })
+      .on('presence', { event: 'leave' }, ({ key, leftPresences }: any) => {
+        console.log('User left presence:', key, leftPresences);
+        setOnlineUsers(prev => {
+          const next = new Set(prev);
+          next.delete(key);
+          return next;
+        });
+      })
+      .subscribe(async (status) => {
+        if (status === 'SUBSCRIBED') {
+          // Announce this user's presence
+          await presenceChannel.track({
+            user_id: user.id,
+            user_name: user.name,
+            is_online: true,
+            timestamp: new Date().toISOString(),
+          });
+        }
+      });
+
+    return () => {
+      presenceChannel.untrack();
+      supabase.removeChannel(presenceChannel);
     };
   }, [channel, user]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -498,22 +638,17 @@ export function ChatArea({ channel, showMembers, onToggleMembers }: ChatAreaProp
     const items = e.clipboardData?.items;
     if (!items) return;
 
-    // Check for image files first
+    // Check for image files first — treat pasted images like file attachments
     for (let i = 0; i < items.length; i++) {
       if (items[i].type.startsWith('image/')) {
         e.preventDefault();
         const file = items[i].getAsFile();
         if (!file) return;
 
-        // Convert image to data URL
-        const reader = new FileReader();
-        reader.onload = () => {
-          setAttachment({
-            url: reader.result as string,
-            isImage: true,
-          });
-        };
-        reader.readAsDataURL(file);
+        // Use the same fileAttachment flow as file input so the image is uploaded
+        setFileAttachment(file);
+        setAttachment(null);
+        setFileInputKey(k => k + 1);
         return;
       }
     }
@@ -646,6 +781,85 @@ export function ChatArea({ channel, showMembers, onToggleMembers }: ChatAreaProp
     }
   };
 
+  const handleDuplicateFileConfirm = async (shouldUpload: boolean) => {
+    setDuplicateFileConfirm({ show: false, fileName: '', file: null });
+    if (!shouldUpload || !duplicateFileConfirm.file || !channel || !user) return;
+
+    // Set the file attachment again and trigger send
+    setFileAttachment(duplicateFileConfirm.file);
+    // Create a synthetic form event to trigger handleSend
+    const event = new Event('submit', { bubbles: true, cancelable: true }) as any;
+    event.preventDefault = () => {};
+    
+    // Set a flag to skip duplicate check
+    (event as any).skipDuplicateCheck = true;
+    
+    // We need a better approach - just do the upload directly
+    setSending(true);
+    setUploading(true);
+    const file = duplicateFileConfirm.file;
+    
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+
+      const res = await fetch('/api/upload', { method: 'POST', body: formData });
+      const data = await res.json();
+
+      if (!res.ok) {
+        setAttachmentError(data.error || 'Upload failed.');
+        setSending(false);
+        setUploading(false);
+        return;
+      }
+
+      // Now create the message with the uploaded file
+      const messageText = text.trim();
+      const { data: insertedMsg, error: insertError } = await supabase
+        .from('messages')
+        .insert({
+          channel_id: channel!.id,
+          sender_id: user!.id,
+          text: messageText || null,
+          attachment_url: data.url,
+          attachment_name: data.name,
+          attachment_size: data.size,
+          reply_to_id: replyTo?.id || null,
+        })
+        .select('*')
+        .single();
+
+      if (!insertError && insertedMsg) {
+        // Detect mentions
+        try {
+          const mentionRegex = /@([^\s@,!.?:;]+)/g;
+          const names: string[] = [];
+          let m;
+          while ((m = mentionRegex.exec(messageText)) !== null) {
+            names.push(m[1]);
+          }
+          if (names.length > 0) {
+            await supabase.rpc('create_message_mentions', { p_message_id: insertedMsg.id, p_names: names });
+          }
+        } catch (e) {
+          console.warn('Failed creating mentions', e);
+        }
+
+        setText('');
+        setAttachment(null);
+        setFileAttachment(null);
+        setFileInputKey(k => k + 1);
+        setAttachmentError('');
+        setReplyTo(null);
+      }
+    } catch {
+      setAttachmentError('Upload failed. Please try again.');
+    }
+    
+    setSending(false);
+    setUploading(false);
+  };
+
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     setAttachmentError('');
     const file = e.target.files?.[0];
@@ -675,6 +889,25 @@ export function ChatArea({ channel, showMembers, onToggleMembers }: ChatAreaProp
 
     // Upload file attachment if present
     if (fileAttachment) {
+      // Check for duplicate filenames first
+      try {
+        const { data: existingAttachments } = await supabase
+          .from('messages')
+          .select('attachment_name')
+          .eq('channel_id', channel.id)
+          .not('attachment_url', 'is', null);
+
+        const existingNames = existingAttachments?.map(m => m.attachment_name) || [];
+        if (existingNames.includes(fileAttachment.name)) {
+          setSending(false);
+          setDuplicateFileConfirm({ show: true, fileName: fileAttachment.name, file: fileAttachment });
+          return;
+        }
+      } catch (err) {
+        console.error('Failed to check for duplicate filenames:', err);
+        // Continue with upload anyway
+      }
+
       setUploading(true);
       try {
         const formData = new FormData();
@@ -725,23 +958,41 @@ export function ChatArea({ channel, showMembers, onToggleMembers }: ChatAreaProp
       return;
     }
 
-    // Detect simple @name mentions and create mention rows via RPC
+    // Create mention rows via RPC. Prefer explicit IDs collected from selection for reliability.
     try {
-      const mentionRegex = /@([^\s@,!.?:;]+)/g;
-      const names: string[] = [];
-      let m;
-      // eslint-disable-next-line no-cond-assign
-      while ((m = mentionRegex.exec(messageText)) !== null) {
-        names.push(m[1]);
-      }
-      if (names.length > 0) {
-        await supabase.rpc('create_message_mentions', { p_message_id: insertedMsg.id, p_names: names });
+      if (mentionSelectedIds && mentionSelectedIds.length > 0) {
+        console.log('Creating mentions by ids:', mentionSelectedIds);
+        const { data, error } = await supabase.rpc('create_message_mentions_by_ids', { p_message_id: insertedMsg.id, p_user_ids: mentionSelectedIds });
+        if (error) {
+          console.error('Error creating mentions by ids:', error);
+        } else {
+          console.log('Mentions created successfully (by ids):', data);
+        }
+      } else {
+        // Fallback: detect simple @name mentions and create mention rows via name-based RPC
+        const mentionRegex = /@([^\s@,!.?:;]+)/g;
+        const names: string[] = [];
+        let m;
+        // eslint-disable-next-line no-cond-assign
+        while ((m = mentionRegex.exec(messageText)) !== null) {
+          names.push(m[1]);
+        }
+        if (names.length > 0) {
+          console.log('Creating mentions for names (fallback):', names);
+          const { data, error } = await supabase.rpc('create_message_mentions', { p_message_id: insertedMsg.id, p_names: names });
+          if (error) {
+            console.error('Error creating mentions (names):', error);
+          } else {
+            console.log('Mentions created successfully (names):', data);
+          }
+        }
       }
     } catch (e) {
-      console.warn('Failed creating mentions', e);
+      console.error('Failed creating mentions:', e);
     }
 
     setText('');
+    setMentionSelectedIds([]);
     setAttachment(null);
     setFileAttachment(null);
     setFileInputKey(k => k + 1);
@@ -787,6 +1038,11 @@ export function ChatArea({ channel, showMembers, onToggleMembers }: ChatAreaProp
       })
     : []).slice(0, 6);
 
+  // Debug: log mention results
+  if (mentionOpen && q) {
+    console.log('Mention results:', { q, memberCount: channelMembers.length, resultsCount: mentionResults.length, results: mentionResults.map(m => m.name) });
+  }
+
   const selectMention = (member: User) => {
     if (!messageInputRef.current) {
       setMentionOpen(false);
@@ -806,6 +1062,16 @@ export function ChatArea({ channel, showMembers, onToggleMembers }: ChatAreaProp
     try { console.debug('selectMention -> insert', { inserted, before, after, caret, at, textLength: text.length }); } catch (e) {}
     const newText = before + inserted + after;
     setText(newText);
+    // track the selected user's id so we can reliably create mentions on send
+    try {
+      setMentionSelectedIds(prev => {
+        if (!member.id) return prev;
+        if (prev.includes(member.id)) return prev;
+        return [...prev, member.id];
+      });
+    } catch (e) {
+      // ignore
+    }
     // Close dropdown and reset
     setMentionOpen(false);
     setMentionQuery('');
@@ -866,6 +1132,7 @@ export function ChatArea({ channel, showMembers, onToggleMembers }: ChatAreaProp
       const q = before.slice(at + 1);
       // only trigger when there's no whitespace in the query
       if (!/\s/.test(q)) {
+        console.log('Mention trigger:', { at, q, channelMembersCount: channelMembers.length, beforeAt: before.charAt(at - 1) });
         setMentionQuery(q);
         setMentionAtIndex(at);
         setMentionSelectedIndex(0);
@@ -945,13 +1212,27 @@ export function ChatArea({ channel, showMembers, onToggleMembers }: ChatAreaProp
             <Video className="w-5 h-5" />
           </button>
           <button
+            onClick={() => setShowChannelMembersManager(true)}
+            className="p-2 rounded-lg transition-colors text-muted hover:text-foreground hover:bg-surface-hover"
+            title="Manage channel members"
+          >
+            <Users className="w-5 h-5" />
+          </button>
+          <button
             onClick={onToggleMembers}
             className={`p-2 rounded-lg transition-colors ${
               showMembers ? 'bg-primary/10 text-primary' : 'text-muted hover:text-foreground hover:bg-surface-hover'
             }`}
             title="Toggle member list"
           >
-            <Users className="w-5 h-5" />
+            <Eye className="w-5 h-5" />
+          </button>
+          <button
+            onClick={() => setShowChannelFilesManager(true)}
+            className="p-2 rounded-lg transition-colors text-muted hover:text-foreground hover:bg-surface-hover"
+            title="View channel files"
+          >
+            <FileText className="w-5 h-5" />
           </button>
         </div>
       </div>
@@ -1169,6 +1450,16 @@ export function ChatArea({ channel, showMembers, onToggleMembers }: ChatAreaProp
                                   {parts.map((part, pi) => {
                                     if (part.type === 'text') {
                                       return <span key={pi}>{part.value}</span>;
+                                    }
+                                    if (part.type === 'mention') {
+                                      return (
+                                        <span
+                                          key={pi}
+                                          className={`font-semibold ${isOwn ? 'text-yellow-200' : 'text-blue-600'}`}
+                                        >
+                                          {part.value}
+                                        </span>
+                                      );
                                     }
                                     if (part.type === 'link') {
                                       return (
@@ -1532,6 +1823,36 @@ export function ChatArea({ channel, showMembers, onToggleMembers }: ChatAreaProp
         onSecondary={confirmBox.variant === 'admin-delete' ? confirmSoftDelete : undefined}
         onClose={() => setConfirmBox({ open: false })}
       />
+
+      {/* Duplicate file confirmation dialog */}
+      <MessageBox
+        open={duplicateFileConfirm.show}
+        title="File already exists"
+        message={`A file named "${duplicateFileConfirm.fileName}" already exists in this channel. Do you want to replace it?`}
+        primaryLabel="Replace"
+        secondaryLabel="Cancel"
+        onPrimary={() => handleDuplicateFileConfirm(true)}
+        onSecondary={() => handleDuplicateFileConfirm(false)}
+        onClose={() => handleDuplicateFileConfirm(false)}
+      />
+
+      {/* Channel Members Manager Modal */}
+      {channel && (
+        <ChannelMembersManager
+          channel={channel}
+          isOpen={showChannelMembersManager}
+          onClose={() => setShowChannelMembersManager(false)}
+        />
+      )}
+
+      {/* Channel Files Manager Modal */}
+      {channel && (
+        <ChannelFilesManager
+          channel={channel}
+          isOpen={showChannelFilesManager}
+          onClose={() => setShowChannelFilesManager(false)}
+        />
+      )}
     </div>
   );
 }

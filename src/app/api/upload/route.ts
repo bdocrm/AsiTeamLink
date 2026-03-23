@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { logEnvHealth } from '@/lib/envCheck';
 
 const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
 const BUCKET_NAME = 'attachments';
@@ -26,6 +27,8 @@ const ALLOWED_TYPES = [
 ];
 
 export async function POST(request: NextRequest) {
+  // Log environment health for easier debugging (prints SET/MISSING, not secrets)
+  logEnvHealth();
   try {
     const formData = await request.formData();
     const file = formData.get('file') as File | null;
@@ -33,6 +36,8 @@ export async function POST(request: NextRequest) {
     if (!file) {
       return NextResponse.json({ error: 'No file provided' }, { status: 400 });
     }
+
+    console.log('Upload request file:', { name: file.name, size: file.size, type: file.type });
 
     if (file.size > MAX_FILE_SIZE) {
       return NextResponse.json(
@@ -51,18 +56,31 @@ export async function POST(request: NextRequest) {
     const supabase = createAdminClient();
 
     // Ensure bucket exists
-    const { data: buckets } = await supabase.storage.listBuckets();
-    const bucketExists = buckets?.some(b => b.name === BUCKET_NAME);
+    let bucketsList;
+    try {
+      const { data: buckets } = await supabase.storage.listBuckets();
+      bucketsList = buckets;
+    } catch (err) {
+      console.error('Error listing buckets:', err);
+      return NextResponse.json({ error: 'Storage listBuckets failed.', detail: String(err) }, { status: 500 });
+    }
+
+    const bucketExists = bucketsList?.some((b: any) => b.name === BUCKET_NAME);
 
     if (!bucketExists) {
-      const { error: createError } = await supabase.storage.createBucket(BUCKET_NAME, {
-        public: true,
-        fileSizeLimit: MAX_FILE_SIZE,
-        allowedMimeTypes: ALLOWED_TYPES,
-      });
-      if (createError) {
-        console.error('Bucket creation error:', createError);
-        return NextResponse.json({ error: 'Failed to initialize storage.' }, { status: 500 });
+      try {
+        const { error: createError } = await supabase.storage.createBucket(BUCKET_NAME, {
+          public: true,
+          fileSizeLimit: MAX_FILE_SIZE,
+          allowedMimeTypes: ALLOWED_TYPES,
+        });
+        if (createError) {
+          console.error('Bucket creation error:', createError);
+          return NextResponse.json({ error: 'Failed to initialize storage.', detail: String(createError) }, { status: 500 });
+        }
+      } catch (err) {
+        console.error('Create bucket threw:', err);
+        return NextResponse.json({ error: 'Create bucket threw error.', detail: String(err) }, { status: 500 });
       }
     }
 
@@ -75,21 +93,31 @@ export async function POST(request: NextRequest) {
     const arrayBuffer = await file.arrayBuffer();
     const buffer = new Uint8Array(arrayBuffer);
 
-    const { error: uploadError } = await supabase.storage
-      .from(BUCKET_NAME)
-      .upload(filePath, buffer, {
-        contentType: file.type,
-        upsert: false,
-      });
+    try {
+      const { error: uploadError } = await supabase.storage
+        .from(BUCKET_NAME)
+        .upload(filePath, buffer, {
+          contentType: file.type,
+          upsert: false,
+        });
 
-    if (uploadError) {
-      console.error('Upload error:', uploadError);
-      return NextResponse.json({ error: 'Failed to upload file.' }, { status: 500 });
+      if (uploadError) {
+        console.error('Upload error:', uploadError);
+        return NextResponse.json({ error: 'Failed to upload file.', detail: String(uploadError) }, { status: 500 });
+      }
+    } catch (err) {
+      console.error('Upload threw error:', err);
+      return NextResponse.json({ error: 'Upload threw error.', detail: String(err) }, { status: 500 });
     }
 
     const { data: urlData } = supabase.storage
       .from(BUCKET_NAME)
       .getPublicUrl(filePath);
+
+    if (!urlData?.publicUrl) {
+      console.error('No public URL returned for uploaded file', { filePath, urlData });
+      return NextResponse.json({ error: 'No public URL for uploaded file.', detail: JSON.stringify(urlData) }, { status: 500 });
+    }
 
     return NextResponse.json({
       url: urlData.publicUrl,
@@ -99,6 +127,6 @@ export async function POST(request: NextRequest) {
     });
   } catch (error) {
     console.error('Upload handler error:', error);
-    return NextResponse.json({ error: 'Upload failed.' }, { status: 500 });
+    return NextResponse.json({ error: 'Upload failed.', detail: String(error) }, { status: 500 });
   }
 }

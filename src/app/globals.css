@@ -189,3 +189,28 @@ body {
   word-break: break-word !important;
   overflow-wrap: anywhere !important;
 }
+
+/* Login logo animation and responsive tweaks */
+@keyframes float-rotate {
+  0% { transform: translateY(0) rotate(0deg); }
+  25% { transform: translateY(-6px) rotate(-3deg); }
+  50% { transform: translateY(0) rotate(0deg); }
+  75% { transform: translateY(6px) rotate(3deg); }
+  100% { transform: translateY(0) rotate(0deg); }
+}
+
+.logo-animate {
+  animation: float-rotate 4.5s ease-in-out infinite;
+  transform-origin: center;
+}
+
+.logo-animate:hover {
+  animation-duration: 2.2s;
+  transform: translateY(-4px) rotate(-6deg);
+}
+
+/* Login form responsive refinements */
+.login-container { padding-left: 16px; padding-right: 16px; }
+@media (min-width: 640px) {
+  .login-container { padding-left: 0; padding-right: 0; }
+}

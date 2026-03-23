@@ -30,7 +30,13 @@ export default function SettingsPage() {
   const handleSaveName = async () => {
     if (!name.trim() || !user) return;
     setSaving(true);
-    await supabase.from('users').update({ name: name.trim() }).eq('id', user.id);
+    try {
+      const res = await supabase.from('users').update({ name: name.trim() }).eq('id', user.id);
+      if (res.error) console.error('Supabase update error (users.name):', res.error);
+      else console.log('Supabase update success (users.name):', res.data);
+    } catch (err) {
+      console.error('Unhandled error updating users.name:', err);
+    }
     await refreshUser();
     setSaving(false);
     setSaved(true);
@@ -40,7 +46,13 @@ export default function SettingsPage() {
   const handleThemeChange = async (pref: ThemePreference) => {
     setPreference(pref);
     if (user) {
-      await supabase.from('users').update({ theme_preference: pref }).eq('id', user.id);
+      try {
+        const res = await supabase.from('users').update({ theme_preference: pref }).eq('id', user.id);
+        if (res.error) console.error('Supabase update error (users.theme_preference):', res.error);
+        else console.log('Supabase update success (users.theme_preference):', res.data);
+      } catch (err) {
+        console.error('Unhandled error updating users.theme_preference:', err);
+      }
     }
   };
 

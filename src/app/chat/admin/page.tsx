@@ -54,38 +54,74 @@ export default function AdminPage() {
   };
 
   const handleApprove = async (userId: string) => {
-    await supabase.from('users').update({ status: 'approved' }).eq('id', userId);
+    try {
+      const res = await supabase.from('users').update({ status: 'approved' }).eq('id', userId);
+      if (res.error) console.error('Supabase update error (users.status=approved):', res.error);
+      else console.log('Supabase update success (users.status=approved):', res.data);
+    } catch (err) {
+      console.error('Unhandled error approving user:', err);
+    }
     fetchUsers();
   };
 
   const handleReject = async (userId: string) => {
-    await supabase.from('users').update({ status: 'rejected' }).eq('id', userId);
+    try {
+      const res = await supabase.from('users').update({ status: 'rejected' }).eq('id', userId);
+      if (res.error) console.error('Supabase update error (users.status=rejected):', res.error);
+      else console.log('Supabase update success (users.status=rejected):', res.data);
+    } catch (err) {
+      console.error('Unhandled error rejecting user:', err);
+    }
     fetchUsers();
   };
 
   const handleRoleChange = async (userId: string, role: UserRole) => {
-    await supabase.from('users').update({ role }).eq('id', userId);
+    try {
+      const res = await supabase.from('users').update({ role }).eq('id', userId);
+      if (res.error) console.error('Supabase update error (users.role):', res.error);
+      else console.log('Supabase update success (users.role):', res.data);
+    } catch (err) {
+      console.error('Unhandled error changing role:', err);
+    }
     fetchUsers();
   };
 
   const handleCampaignAssign = async (userId: string, campaignId: string | null) => {
-    await supabase
-      .from('users')
-      .update({ campaign_id: campaignId || null })
-      .eq('id', userId);
+    try {
+      const res = await supabase
+        .from('users')
+        .update({ campaign_id: campaignId || null })
+        .eq('id', userId);
+      if (res.error) console.error('Supabase update error (users.campaign_id):', res.error);
+      else console.log('Supabase update success (users.campaign_id):', res.data);
+    } catch (err) {
+      console.error('Unhandled error assigning campaign:', err);
+    }
     fetchUsers();
   };
 
   const handleCreateCampaign = async () => {
     if (!newCampaignName.trim()) return;
-    await supabase.from('campaigns').insert({ name: newCampaignName.trim() });
+    try {
+      const res = await supabase.from('campaigns').insert({ name: newCampaignName.trim() });
+      if (res.error) console.error('Supabase insert error (campaigns):', res.error);
+      else console.log('Supabase insert success (campaigns):', res.data);
+    } catch (err) {
+      console.error('Unhandled error creating campaign:', err);
+    }
     setNewCampaignName('');
     fetchCampaigns();
   };
 
   const handleDeleteCampaign = async (id: string) => {
     if (!confirm('Are you sure? This will remove all channels in this campaign.')) return;
-    await supabase.from('campaigns').delete().eq('id', id);
+    try {
+      const res = await supabase.from('campaigns').delete().eq('id', id);
+      if (res.error) console.error('Supabase delete error (campaigns):', res.error);
+      else console.log('Supabase delete success (campaigns):', res.data);
+    } catch (err) {
+      console.error('Unhandled error deleting campaign:', err);
+    }
     fetchCampaigns();
   };
 

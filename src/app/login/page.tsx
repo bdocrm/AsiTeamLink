@@ -58,22 +58,22 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background px-4">
-      <div className="w-full max-w-md">
+    <div className="min-h-screen flex items-center justify-center bg-background px-4 login-container">
+      <div className="w-full max-w-md mx-auto">
         <div className="flex flex-col items-center mb-8">
           <Image
             src="/asiteamlinklogo.png"
             alt="AsiTeamLink Logo"
-            width={80}
-            height={80}
-            className="mb-4 rounded-2xl"
+            width={96}
+            height={96}
+            className="mb-4 rounded-2xl logo-animate w-20 h-20 sm:w-24 sm:h-24"
             priority
           />
-          <h1 className="text-3xl font-bold text-foreground">AsiTeamLink</h1>
-          <p className="text-muted mt-1">Sign in to your account</p>
+          <h1 className="text-2xl sm:text-3xl font-bold text-foreground">AsiTeamLink</h1>
+          <p className="text-muted mt-1 text-sm sm:text-base">Sign in to your account</p>
         </div>
 
-        <form onSubmit={handleLogin} className="bg-surface border border-border rounded-2xl p-8 shadow-sm">
+        <form onSubmit={handleLogin} className="bg-surface border border-border rounded-2xl p-6 sm:p-8 shadow-sm">
           {error && (
             <div className="mb-4 p-3 rounded-lg bg-danger/10 text-danger text-sm border border-danger/20">
               {error}

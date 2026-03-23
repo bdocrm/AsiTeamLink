@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import type { Channel, Campaign } from '@/lib/types';
 import { useRouter } from 'next/navigation';
+import { CreateChannelModal } from './CreateChannelModal';
 
 interface SidebarProps {
   selectedChannel: Channel | null;
@@ -32,9 +33,8 @@ export function Sidebar({ selectedChannel, onSelectChannel, collapsed, onToggleC
   const [channels, setChannels] = useState<Channel[]>([]);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [expandedCampaigns, setExpandedCampaigns] = useState<Set<string>>(new Set());
-  const [showCreateChannel, setShowCreateChannel] = useState(false);
-  const [newChannelName, setNewChannelName] = useState('');
-  const [createForCampaign, setCreateForCampaign] = useState('');
+  const [showCreateChannelModal, setShowCreateChannelModal] = useState(false);
+  const [selectedCampaignForCreate, setSelectedCampaignForCreate] = useState<string>('');
   const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>({});
   const supabase = createClient();
   const router = useRouter();
@@ -111,11 +111,15 @@ export function Sidebar({ selectedChannel, onSelectChannel, collapsed, onToggleC
   };
 
   const fetchChannels = async () => {
-    // Try RPC first, fall back to direct query
-    let result = await supabase.rpc('get_all_channels');
+    // Use get_my_channels to only show channels user is a member of
+    let result = await supabase.rpc('get_my_channels');
     if (result.error) {
-      console.warn('RPC get_all_channels failed, trying direct query:', result.error.message);
-      result = await supabase.from('channels').select('*').order('name');
+      console.warn('RPC get_my_channels failed:', result.error.message);
+      // Fallback to direct query with channel_members filter
+      result = await supabase
+        .from('channels')
+        .select('*')
+        .order('name');
     }
     const data = result.data;
     if (data) {
@@ -141,20 +145,10 @@ export function Sidebar({ selectedChannel, onSelectChannel, collapsed, onToggleC
     });
   };
 
-  const handleCreateChannel = async () => {
-    if (!newChannelName.trim() || !createForCampaign) return;
-    const campaignId = user?.role === 'admin' ? createForCampaign : user?.campaign_id;
-    if (!campaignId) return;
-
-    await supabase.from('channels').insert({
-      name: newChannelName.trim(),
-      campaign_id: campaignId,
-      created_by: user?.id,
-    });
-
-    setNewChannelName('');
-    setShowCreateChannel(false);
-    fetchChannels();
+  const handleChannelCreated = () => {
+    setShowCreateChannelModal(false);
+    setSelectedCampaignForCreate('');
+    fetchChannels(); // Refresh channels after creation
   };
 
   const handleSelectChannel = async (channel: Channel) => {
@@ -172,8 +166,21 @@ export function Sidebar({ selectedChannel, onSelectChannel, collapsed, onToggleC
   };
 
   const handleLogout = async () => {
-    await supabase.from('users').update({ is_online: false }).eq('id', user?.id);
-    await supabase.auth.signOut();
+    try {
+      const result = await supabase.from('users').update({ is_online: false }).eq('id', user?.id);
+      if (result.error) {
+        console.error('Supabase update error (users.is_online):', result.error);
+      } else {
+        console.log('Supabase update success (users.is_online):', result.data);
+      }
+    } catch (err) {
+      console.error('Unhandled error updating users.is_online:', err);
+    }
+    try {
+      await supabase.auth.signOut();
+    } catch (err) {
+      console.error('Error signing out:', err);
+    }
     router.push('/login');
   };
 
@@ -240,51 +247,17 @@ export function Sidebar({ selectedChannel, onSelectChannel, collapsed, onToggleC
       <div className="flex-1 overflow-y-auto p-2">
         {canCreateChannel && (
           <button
-            onClick={() => setShowCreateChannel(!showCreateChannel)}
+            onClick={() => {
+              // For non-admins, use their campaign. For admins, let modal handle campaign selection
+              const campaignId = user?.role === 'admin' ? '' : user?.campaign_id;
+              setSelectedCampaignForCreate(campaignId || '');
+              setShowCreateChannelModal(true);
+            }}
             className="w-full flex items-center gap-2 px-3 py-2 text-sm text-muted hover:text-foreground hover:bg-surface-hover rounded-lg transition-colors mb-1"
           >
             <Plus className="w-4 h-4" />
             Create Channel
           </button>
-        )}
-
-        {showCreateChannel && (
-          <div className="mx-2 mb-3 p-3 bg-background border border-border rounded-lg">
-            <input
-              type="text"
-              value={newChannelName}
-              onChange={(e) => setNewChannelName(e.target.value)}
-              placeholder="Channel name"
-              maxLength={100}
-              className="w-full px-2 py-1.5 bg-surface border border-border rounded text-sm text-foreground placeholder:text-muted focus:outline-none focus:ring-1 focus:ring-primary mb-2"
-            />
-            {user?.role === 'admin' && (
-              <select
-                value={createForCampaign}
-                onChange={(e) => setCreateForCampaign(e.target.value)}
-                className="w-full px-2 py-1.5 bg-surface border border-border rounded text-sm text-foreground mb-2 focus:outline-none focus:ring-1 focus:ring-primary"
-              >
-                <option value="">Select campaign</option>
-                {campaigns.map(c => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
-                ))}
-              </select>
-            )}
-            <div className="flex gap-2">
-              <button
-                onClick={handleCreateChannel}
-                className="flex-1 py-1.5 bg-primary hover:bg-primary-hover text-white text-xs rounded font-medium transition-colors"
-              >
-                Create
-              </button>
-              <button
-                onClick={() => setShowCreateChannel(false)}
-                className="flex-1 py-1.5 bg-surface-hover text-foreground text-xs rounded font-medium transition-colors hover:bg-border"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
         )}
 
         {campaigns.map(campaign => {
@@ -308,7 +281,7 @@ export function Sidebar({ selectedChannel, onSelectChannel, collapsed, onToggleC
                 {(() => {
                   const campaignUnread = campaignChannels.reduce((sum, ch) => sum + (unreadCounts[ch.id] || 0), 0);
                   return campaignUnread > 0 ? (
-                    <span className="ml-auto bg-danger text-white text-[10px] font-bold min-w-[18px] h-[18px] flex items-center justify-center rounded-full px-1 shrink-0">
+                    <span className="ml-auto bg-danger text-white text-[10px] font-bold min-w-4.5 h-4.5 flex items-center justify-center rounded-full px-1 shrink-0">
                       {campaignUnread > 99 ? '99+' : campaignUnread}
                     </span>
                   ) : (
@@ -334,7 +307,7 @@ export function Sidebar({ selectedChannel, onSelectChannel, collapsed, onToggleC
                       <Hash className="w-3.5 h-3.5 shrink-0" />
                       <span className="truncate flex-1">{channel.name}</span>
                       {unreadCounts[channel.id] > 0 && selectedChannel?.id !== channel.id && (
-                        <span className="ml-auto bg-primary text-white text-[10px] font-bold min-w-[18px] h-[18px] flex items-center justify-center rounded-full px-1 shrink-0">
+                        <span className="ml-auto bg-primary text-white text-[10px] font-bold min-w-4.5 h-4.5 flex items-center justify-center rounded-full px-1 shrink-0">
                           {unreadCounts[channel.id] > 99 ? '99+' : unreadCounts[channel.id]}
                         </span>
                       )}
@@ -390,6 +363,14 @@ export function Sidebar({ selectedChannel, onSelectChannel, collapsed, onToggleC
           </button>
         </div>
       </div>
+
+      {/* Create Channel Modal */}
+      <CreateChannelModal
+        isOpen={showCreateChannelModal}
+        campaignId={selectedCampaignForCreate}
+        onClose={() => setShowCreateChannelModal(false)}
+        onChannelCreated={handleChannelCreated}
+      />
     </div>
   );
 }
