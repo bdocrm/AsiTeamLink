@@ -32,7 +32,6 @@ export default function LoginPage() {
       return;
     }
 
-    // Check user status
     const { data: { user } } = await supabase.auth.getUser();
     if (user) {
       const { data: statusData } = await supabase.rpc('get_user_status', { user_id: user.id });
@@ -58,24 +57,33 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background px-4 login-container">
-      <div className="w-full max-w-md mx-auto">
+    <div className="min-h-[100dvh] flex items-center justify-center bg-background px-4 login-container relative overflow-hidden">
+      {/* Background decoration */}
+      <div className="absolute inset-0 overflow-hidden pointer-events-none">
+        <div className="absolute -top-32 -right-32 w-96 h-96 rounded-full bg-primary/5 blur-3xl" />
+        <div className="absolute -bottom-32 -left-32 w-96 h-96 rounded-full bg-secondary/5 blur-3xl" />
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] rounded-full bg-accent/3 blur-3xl" />
+      </div>
+
+      <div className="w-full max-w-md mx-auto relative z-10 animate-fade-in-up">
         <div className="flex flex-col items-center mb-8">
-          <Image
-            src="/asiteamlinklogo.png"
-            alt="AsiTeamLink Logo"
-            width={96}
-            height={96}
-            className="mb-4 rounded-2xl logo-animate w-20 h-20 sm:w-24 sm:h-24"
-            priority
-          />
-          <h1 className="text-2xl sm:text-3xl font-bold text-foreground">AsiTeamLink</h1>
-          <p className="text-muted mt-1 text-sm sm:text-base">Sign in to your account</p>
+          <div className="loading-logo-ring mb-5">
+            <Image
+              src="/asiteamlinklogo.png"
+              alt="AsiTeamLink Logo"
+              width={96}
+              height={96}
+              className="rounded-2xl logo-animate w-20 h-20 sm:w-24 sm:h-24"
+              priority
+            />
+          </div>
+          <h1 className="text-3xl sm:text-4xl font-extrabold gradient-brand-text">AsiTeamLink</h1>
+          <p className="text-muted mt-2 text-sm sm:text-base">Sign in to your account</p>
         </div>
 
-        <form onSubmit={handleLogin} className="bg-surface border border-border rounded-2xl p-6 sm:p-8 shadow-sm">
+        <form onSubmit={handleLogin} className="glass-strong rounded-2xl p-6 sm:p-8 shadow-xl border border-border/50">
           {error && (
-            <div className="mb-4 p-3 rounded-lg bg-danger/10 text-danger text-sm border border-danger/20">
+            <div className="mb-4 p-3 rounded-xl bg-danger/10 text-danger text-sm border border-danger/20 animate-fade-in">
               {error}
             </div>
           )}
@@ -90,7 +98,7 @@ export default function LoginPage() {
                 onChange={(e) => setEmail(e.target.value)}
                 required
                 placeholder="you@example.com"
-                className="w-full pl-10 pr-4 py-2.5 bg-background border border-border rounded-lg text-foreground placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition-colors"
+                className="chat-input-field !pl-10"
               />
             </div>
           </div>
@@ -105,7 +113,7 @@ export default function LoginPage() {
                 onChange={(e) => setPassword(e.target.value)}
                 required
                 placeholder="••••••••"
-                className="w-full pl-10 pr-10 py-2.5 bg-background border border-border rounded-lg text-foreground placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition-colors"
+                className="chat-input-field !pl-10 !pr-10"
               />
               <button
                 type="button"
@@ -120,10 +128,10 @@ export default function LoginPage() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full py-2.5 bg-primary hover:bg-primary-hover text-white rounded-lg font-medium transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+            className="w-full py-3 btn-primary font-semibold text-[15px] disabled:opacity-50 flex items-center justify-center gap-2"
           >
             {loading ? (
-              <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+              <div className="loading-spinner !w-5 !h-5 !border-2 !border-white/30 !border-t-white" />
             ) : (
               <>
                 <LogIn className="w-4 h-4" />
@@ -132,9 +140,9 @@ export default function LoginPage() {
             )}
           </button>
 
-          <p className="text-center mt-4 text-sm text-muted">
+          <p className="text-center mt-5 text-sm text-muted">
             Don&apos;t have an account?{' '}
-            <Link href="/register" className="text-primary hover:text-primary-hover font-medium transition-colors">
+            <Link href="/register" className="text-primary hover:text-primary-hover font-semibold transition-colors">
               Register
             </Link>
           </p>

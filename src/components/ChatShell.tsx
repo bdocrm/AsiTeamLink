@@ -3,6 +3,7 @@
 import { AuthProvider, useAuth } from '@/components/AuthProvider';
 import { useRouter } from 'next/navigation';
 import { useEffect } from 'react';
+import Image from 'next/image';
 
 function ChatGuard({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
@@ -20,9 +21,25 @@ function ChatGuard({ children }: { children: React.ReactNode }) {
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
-        <div className="flex flex-col items-center gap-3">
-          <div className="w-10 h-10 border-3 border-primary/30 border-t-primary rounded-full animate-spin" />
-          <p className="text-muted text-sm">Loading AsiTeamLink...</p>
+        <div className="flex flex-col items-center gap-5 animate-fade-in">
+          <div className="loading-logo-ring">
+            <Image
+              src="/asiteamlinklogo.png"
+              alt="AsiTeamLink"
+              width={56}
+              height={56}
+              className="rounded-2xl"
+              priority
+            />
+          </div>
+          <div className="flex flex-col items-center gap-2">
+            <h2 className="text-lg font-bold gradient-brand-text">AsiTeamLink</h2>
+            <div className="flex items-center gap-2">
+              <div className="typing-dot" />
+              <div className="typing-dot" />
+              <div className="typing-dot" />
+            </div>
+          </div>
         </div>
       </div>
     );

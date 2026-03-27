@@ -26,18 +26,22 @@ export default function MessageBox({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div className="fixed inset-0 bg-black/50" onClick={onClose} />
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="modal-backdrop" onClick={onClose} />
 
-      <div className="bg-surface border border-border rounded-lg shadow-lg p-5 w-full max-w-lg z-10">
-        {title && <h3 className="text-lg font-semibold text-foreground">{title}</h3>}
-        {message && <div className="text-sm text-muted mt-2">{message}</div>}
+      <div className="modal-panel p-6 w-full max-w-md z-10 relative">
+        {title && (
+          <h3 className="text-lg font-bold text-foreground mb-1">{title}</h3>
+        )}
+        {message && (
+          <div className="text-sm text-muted mt-2 leading-relaxed">{message}</div>
+        )}
 
-        <div className="mt-4 flex justify-end gap-2">
+        <div className="mt-5 flex justify-end gap-2">
           {secondaryLabel && (
             <button
               onClick={() => { if (onSecondary) onSecondary(); }}
-              className="px-3 py-1.5 bg-surface hover:bg-surface-hover border border-border rounded text-sm"
+              className="px-4 py-2 bg-surface hover:bg-surface-hover border border-border rounded-xl text-sm font-medium transition-all duration-200"
             >
               {secondaryLabel}
             </button>
@@ -45,14 +49,14 @@ export default function MessageBox({
 
           <button
             onClick={onClose}
-            className="px-3 py-1.5 bg-surface hover:bg-surface-hover border border-border rounded text-sm"
+            className="px-4 py-2 bg-surface hover:bg-surface-hover border border-border rounded-xl text-sm font-medium transition-all duration-200"
           >
             Cancel
           </button>
 
           <button
             onClick={() => { if (onPrimary) onPrimary(); }}
-            className="px-3 py-1.5 bg-primary text-white rounded text-sm"
+            className="px-4 py-2 btn-primary text-sm"
           >
             {primaryLabel}
           </button>

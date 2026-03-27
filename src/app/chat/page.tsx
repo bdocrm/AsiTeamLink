@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { X } from 'lucide-react';
 import { Sidebar } from '@/components/chat/Sidebar';
 import { ChatArea } from '@/components/chat/ChatArea';
@@ -12,50 +12,108 @@ export default function ChatPage() {
   const [showMembers, setShowMembers] = useState(true);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
+  const [sidebarDrawerOpen, setSidebarDrawerOpen] = useState(false);
+  const [memberDrawerOpen, setMemberDrawerOpen] = useState(false);
 
-  // Detect mobile viewport and hide members panel by default on small screens
+  // Detect mobile viewport
   useEffect(() => {
-    const check = () => setIsMobile(window.innerWidth <= 640);
+    const check = () => {
+      const mobile = window.innerWidth <= 768;
+      setIsMobile(mobile);
+      if (mobile) {
+        setShowMembers(false);
+      }
+    };
     check();
     window.addEventListener('resize', check);
-    // Hide members on mobile by default
-    if (window.innerWidth <= 640) setShowMembers(false);
     return () => window.removeEventListener('resize', check);
   }, []);
 
+  const handleToggleSidebar = useCallback(() => {
+    if (isMobile) {
+      setSidebarDrawerOpen(prev => !prev);
+    } else {
+      setSidebarCollapsed(prev => !prev);
+    }
+  }, [isMobile]);
+
+  const handleToggleMembers = useCallback(() => {
+    if (isMobile) {
+      setMemberDrawerOpen(prev => !prev);
+    } else {
+      setShowMembers(prev => !prev);
+    }
+  }, [isMobile]);
+
+  const handleSelectChannelMobile = useCallback((c: Channel) => {
+    setSelectedChannel(c);
+    setSidebarDrawerOpen(false);
+  }, []);
+
   return (
-    <div className="flex h-screen bg-background overflow-hidden">
-      <Sidebar
-        selectedChannel={selectedChannel}
-        onSelectChannel={setSelectedChannel}
-        collapsed={sidebarCollapsed}
-        onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
-      />
+    <div className="flex h-[100dvh] bg-background overflow-hidden">
+      {/* Desktop sidebar */}
+      {!isMobile && (
+        <Sidebar
+          selectedChannel={selectedChannel}
+          onSelectChannel={setSelectedChannel}
+          collapsed={sidebarCollapsed}
+          onToggleCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
+        />
+      )}
+
+      {/* Mobile sidebar drawer - smooth slide from left */}
+      {isMobile && (
+        <>
+          <div
+            className={`drawer-overlay ${sidebarDrawerOpen ? 'active' : ''}`}
+            onClick={() => setSidebarDrawerOpen(false)}
+          />
+          <div className={`drawer-panel-left w-[82%] max-w-[320px] ${sidebarDrawerOpen ? 'open' : ''}`}>
+            <Sidebar
+              selectedChannel={selectedChannel}
+              onSelectChannel={handleSelectChannelMobile}
+              collapsed={false}
+              onToggleCollapse={() => setSidebarDrawerOpen(false)}
+            />
+          </div>
+        </>
+      )}
+
       <ChatArea
         channel={selectedChannel}
-        showMembers={showMembers}
-        onToggleMembers={() => setShowMembers(!showMembers)}
+        showMembers={!isMobile && showMembers}
+        onToggleMembers={handleToggleMembers}
+        onToggleSidebar={handleToggleSidebar}
       />
-      {/* Desktop: inline member panel. Mobile: overlay panel when toggled */}
-      {selectedChannel && (
-        isMobile ? (
-          showMembers && (
-            <div className="fixed inset-0 z-50 flex">
-              <div className="absolute inset-0 bg-black/40" onClick={() => setShowMembers(false)} />
-              <div className="relative ml-auto w-[85%] max-w-xs bg-surface border-l border-border h-full">
-                <div className="p-3 border-b border-border flex items-center justify-between">
-                  <h3 className="text-sm font-semibold text-foreground">Members</h3>
-                  <button onClick={() => setShowMembers(false)} className="p-2 text-muted hover:text-foreground rounded-lg">
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
-                <MemberList channel={selectedChannel} />
+
+      {/* Desktop: inline member panel */}
+      {!isMobile && selectedChannel && showMembers && (
+        <MemberList channel={selectedChannel} />
+      )}
+
+      {/* Mobile member drawer - smooth slide from right */}
+      {isMobile && selectedChannel && (
+        <>
+          <div
+            className={`drawer-overlay ${memberDrawerOpen ? 'active' : ''}`}
+            onClick={() => setMemberDrawerOpen(false)}
+          />
+          <div className={`drawer-panel-right w-[82%] max-w-[320px] ${memberDrawerOpen ? 'open' : ''}`}>
+            <div className="h-full bg-surface flex flex-col">
+              <div className="p-4 border-b border-border flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-foreground">Members</h3>
+                <button
+                  onClick={() => setMemberDrawerOpen(false)}
+                  className="p-2 text-muted hover:text-foreground rounded-xl hover:bg-surface-hover transition-colors"
+                >
+                  <X className="w-4 h-4" />
+                </button>
               </div>
+              <MemberList channel={selectedChannel} />
             </div>
-          )
-        ) : (
-          showMembers && <MemberList channel={selectedChannel} />
-        )
+          </div>
+        </>
       )}
     </div>
   );

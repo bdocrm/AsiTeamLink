@@ -26,6 +26,7 @@ import {
   Search,
   Bell,
   BellOff,
+  Menu,
 } from 'lucide-react';
 import type { Channel, Message, User, Reaction } from '@/lib/types';
 import dynamic from 'next/dynamic';
@@ -40,6 +41,7 @@ interface ChatAreaProps {
   channel: Channel | null;
   showMembers: boolean;
   onToggleMembers: () => void;
+  onToggleSidebar?: () => void;
 }
 
 function formatFileSize(bytes: number): string {
@@ -123,7 +125,7 @@ function parseMessageContent(text: string): { parts: { type: 'text' | 'link' | '
   return { parts };
 }
 
-export function ChatArea({ channel, showMembers, onToggleMembers }: ChatAreaProps) {
+export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSidebar }: ChatAreaProps) {
   const { user } = useAuth();
   const [messages, setMessages] = useState<Message[]>([]);
   const [usersMap, setUsersMap] = useState<Record<string, User>>({});
@@ -1401,11 +1403,34 @@ export function ChatArea({ channel, showMembers, onToggleMembers }: ChatAreaProp
 
   if (!channel) {
     return (
-      <div className="flex-1 flex items-center justify-center bg-background">
-        <div className="text-center">
-          <MessageSquare className="w-16 h-16 text-muted/30 mx-auto mb-4" />
-          <h2 className="text-xl font-semibold text-foreground mb-2">Welcome to AsiTeamLink</h2>
-          <p className="text-muted">Select a channel from the sidebar to start chatting</p>
+      <div className="flex-1 flex flex-col bg-background">
+        {/* Mobile header with sidebar toggle when no channel selected */}
+        <div className="md:hidden p-4 flex items-center gap-3">
+          <button
+            onClick={() => onToggleSidebar && onToggleSidebar()}
+            className="p-2.5 rounded-xl text-muted hover:text-primary hover:bg-primary-light transition-all duration-200"
+            title="Open sidebar"
+          >
+            <Menu className="w-5 h-5" />
+          </button>
+          <span className="text-sm font-semibold gradient-brand-text">AsiTeamLink</span>
+        </div>
+        <div className="flex-1 flex items-center justify-center">
+          <div className="text-center animate-fade-in px-6">
+            <div className="relative mx-auto mb-6 w-20 h-20">
+              <div className="w-20 h-20 rounded-2xl gradient-brand opacity-10 absolute inset-0 animate-float" />
+              <MessageSquare className="w-10 h-10 text-primary absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2" />
+            </div>
+            <h2 className="text-2xl font-bold gradient-brand-text mb-2">Welcome to AsiTeamLink</h2>
+            <p className="text-muted text-sm max-w-xs mx-auto mb-6">Select a channel from the sidebar to start chatting with your team</p>
+            <button
+              onClick={() => onToggleSidebar && onToggleSidebar()}
+              className="md:hidden inline-flex items-center gap-2 px-5 py-2.5 btn-primary text-sm font-semibold"
+            >
+              <Menu className="w-4 h-4" />
+              Open Channels
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -1414,96 +1439,54 @@ export function ChatArea({ channel, showMembers, onToggleMembers }: ChatAreaProp
   return (
     <div className="chat-area flex-1 flex flex-col bg-background min-w-0" onClick={() => showEmojiFor && setShowEmojiFor(null)}>
       {/* Channel header */}
-      <div className="h-14 border-b border-border flex items-center justify-between px-4 shrink-0">
-        <div className="flex items-center gap-2">
-          <Hash className="w-5 h-5 text-muted" />
-          <h2 className="font-semibold text-foreground">{channel.name}</h2>
+      <div className="channel-header">
+        <div className="flex items-center gap-2 min-w-0">
+          <button
+            onClick={() => onToggleSidebar && onToggleSidebar()}
+            className="p-2 rounded-xl md:hidden text-muted hover:text-primary hover:bg-primary-light transition-all duration-200 shrink-0"
+            title="Open sidebar"
+          >
+            <Menu className="w-5 h-5" />
+          </button>
+          <div className="w-8 h-8 rounded-lg gradient-primary flex items-center justify-center shrink-0">
+            <Hash className="w-4 h-4 text-white" />
+          </div>
+          <h2 className="font-semibold text-foreground truncate text-[15px]">{channel.name}</h2>
         </div>
-        <div className="flex items-center gap-1">
-          {/* Conversation search */}
-          <div className="relative">
+        <div className="flex items-center gap-0.5">
+          {/* Search */}
+          <div className="relative hidden sm:block">
             <input
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               onFocus={() => setSearchFocused(true)}
               onBlur={() => setTimeout(() => setSearchFocused(false), 180)}
-              placeholder="Search in this conversation"
-              className="px-3 py-1.5 rounded-full border border-border bg-surface text-sm w-40 focus:outline-none focus:ring-2 focus:ring-primary/30"
+              placeholder="Search..."
+              className="chat-input-field !py-1.5 !px-3 !text-xs w-32 focus:w-44 transition-all duration-300 !rounded-full"
             />
-            <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted" />
+            <Search className="absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted" />
           </div>
           {(searchFocused || searchQuery.trim().length > 0) && (
-            <div className="flex items-center gap-1">
-              <button
-                onClick={() => {
-                  if (searchResults.length === 0) return;
-                  const prev = (activeSearchIndex - 1 + searchResults.length) % searchResults.length;
-                  setActiveSearchIndex(prev);
-                  scrollToMessage(searchResults[prev]);
-                }}
-                className="p-2 rounded-lg text-muted hover:text-foreground hover:bg-surface-hover"
-                title="Previous match"
-              >
-                ◀
-              </button>
-              <button
-                onClick={() => {
-                  if (searchResults.length === 0) return;
-                  const next = (activeSearchIndex + 1) % searchResults.length;
-                  setActiveSearchIndex(next);
-                  scrollToMessage(searchResults[next]);
-                }}
-                className="p-2 rounded-lg text-muted hover:text-foreground hover:bg-surface-hover"
-                title="Next match"
-              >
-                ▶
-              </button>
-              <div className="text-xs text-muted px-2">{searchResults.length > 0 ? `${activeSearchIndex + 1}/${searchResults.length}` : '0/0'}</div>
+            <div className="flex items-center gap-0.5 animate-fade-in">
+              <button onClick={() => { if (searchResults.length === 0) return; const prev = (activeSearchIndex - 1 + searchResults.length) % searchResults.length; setActiveSearchIndex(prev); scrollToMessage(searchResults[prev]); }} className="p-1.5 rounded-lg text-muted hover:text-foreground hover:bg-surface-hover" title="Previous">◀</button>
+              <button onClick={() => { if (searchResults.length === 0) return; const next = (activeSearchIndex + 1) % searchResults.length; setActiveSearchIndex(next); scrollToMessage(searchResults[next]); }} className="p-1.5 rounded-lg text-muted hover:text-foreground hover:bg-surface-hover" title="Next">▶</button>
+              <span className="text-[10px] text-muted px-1">{searchResults.length > 0 ? `${activeSearchIndex + 1}/${searchResults.length}` : '0/0'}</span>
             </div>
           )}
-          {/* Notification toggle */}
-          <button
-            onClick={() => {
-              const next = !muted;
-              setMuted(next);
-              try { localStorage.setItem('asiteam_muted', next ? '1' : '0'); } catch (e) {}
-            }}
-            title={muted ? 'Unmute notifications' : 'Mute notifications'}
-            className="p-2 rounded-lg text-muted hover:text-foreground hover:bg-surface-hover"
-          >
-            {muted ? <BellOff className="w-5 h-5" /> : <Bell className="w-5 h-5" />}
+          <button onClick={() => { const next = !muted; setMuted(next); try { localStorage.setItem('asiteam_muted', next ? '1' : '0'); } catch (e) {} }} title={muted ? 'Unmute' : 'Mute'} className="p-2 rounded-xl text-muted hover:text-foreground hover:bg-surface-hover transition-all duration-200 hidden sm:flex">
+            {muted ? <BellOff className="w-4 h-4" /> : <Bell className="w-4 h-4" />}
           </button>
-          <button
-            onClick={startCall}
-            className={`p-2 rounded-lg transition-colors ${
-              inCall ? 'bg-success/10 text-success' : 'text-muted hover:text-foreground hover:bg-surface-hover'
-            }`}
-            title="Start video call"
-          >
-            <Video className="w-5 h-5" />
+          <button onClick={startCall} className={`p-2 rounded-xl transition-all duration-200 hidden sm:flex ${inCall ? 'bg-success/10 text-success' : 'text-muted hover:text-foreground hover:bg-surface-hover'}`} title="Video call">
+            <Video className="w-4 h-4" />
           </button>
-          <button
-            onClick={() => setShowChannelMembersManager(true)}
-            className="p-2 rounded-lg transition-colors text-muted hover:text-foreground hover:bg-surface-hover"
-            title="Manage channel members"
-          >
-            <Users className="w-5 h-5" />
+          <button onClick={() => setShowChannelMembersManager(true)} className="p-2 rounded-xl text-muted hover:text-secondary hover:bg-secondary-light transition-all duration-200 hidden sm:flex" title="Manage members">
+            <Users className="w-4 h-4" />
           </button>
-          <button
-            onClick={onToggleMembers}
-            className={`p-2 rounded-lg transition-colors ${
-              showMembers ? 'bg-primary/10 text-primary' : 'text-muted hover:text-foreground hover:bg-surface-hover'
-            }`}
-            title="Toggle member list"
-          >
-            <Eye className="w-5 h-5" />
+          <button onClick={onToggleMembers} className={`p-2 rounded-xl transition-all duration-200 ${showMembers ? 'bg-primary/10 text-primary' : 'text-muted hover:text-foreground hover:bg-surface-hover'}`} title="Members">
+            <Eye className="w-4 h-4" />
           </button>
-          <button
-            onClick={() => setShowChannelFilesManager(true)}
-            className="p-2 rounded-lg transition-colors text-muted hover:text-foreground hover:bg-surface-hover"
-            title="View channel files"
-          >
-            <FileText className="w-5 h-5" />
+          <button onClick={() => setShowChannelFilesManager(true)} className="p-2 rounded-xl text-muted hover:text-accent hover:bg-accent-light transition-all duration-200 hidden sm:flex" title="Files">
+            <FileText className="w-4 h-4" />
           </button>
         </div>
       </div>
@@ -1552,14 +1535,12 @@ export function ChatArea({ channel, showMembers, onToggleMembers }: ChatAreaProp
       )}
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-4 py-2 sm:pb-2 pb-28">
+      <div className="messages-scroll-area flex-1 overflow-y-auto px-4 py-2 sm:pb-4 pb-32">
         {groupedMessages.map((group, gi) => (
           <div key={gi}>
             {/* Date separator */}
-            <div className="flex items-center gap-3 my-4">
-              <div className="flex-1 h-px bg-border" />
-              <span className="text-xs font-medium text-muted px-2">{group.date}</span>
-              <div className="flex-1 h-px bg-border" />
+            <div className="date-separator">
+              <span>{group.date}</span>
             </div>
 
             {group.messages.map((msg, mi) => {
@@ -1578,9 +1559,9 @@ export function ChatArea({ channel, showMembers, onToggleMembers }: ChatAreaProp
                 <div
                   key={msg.id}
                   ref={(el) => { messageRefs.current[msg.id] = el; }}
-                  className={`group relative flex gap-3 px-2 py-0.5 hover:bg-surface-hover/50 rounded-lg ${
-                    showAvatar ? 'mt-3' : 'mt-0.5'
-                  } ${isOwn ? 'flex-row-reverse items-end' : 'items-start'} ${searchResults[activeSearchIndex] === msg.id ? 'ring-2 ring-primary/30' : ''}`}
+                  className={`msg-enter group relative flex gap-2.5 px-2 py-0.5 hover:bg-surface-hover/30 rounded-xl transition-colors duration-150 ${
+                    showAvatar ? 'mt-4' : 'mt-0.5'
+                  } ${isOwn ? 'flex-row-reverse items-end' : 'items-start'} ${searchResults[activeSearchIndex] === msg.id ? 'ring-2 ring-secondary/30 bg-secondary-light/30' : ''}`}
                 >
                   {/* Hover action buttons */}
                   <div className="absolute -top-3 right-2 hidden group-hover:flex items-center gap-0.5 bg-surface border border-border rounded-lg shadow-sm px-1 py-0.5 z-10">
@@ -1645,10 +1626,10 @@ export function ChatArea({ channel, showMembers, onToggleMembers }: ChatAreaProp
                   <div className="w-9 shrink-0">
                     {showAvatar && (
                       <div
-                        className={`w-9 h-9 rounded-full flex items-center justify-center text-sm font-semibold ${
+                        className={`w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold shadow-sm ${
                           isOwn
-                            ? 'bg-primary/20 text-primary'
-                            : 'bg-warning/20 text-warning'
+                            ? 'avatar-gradient'
+                            : 'avatar-secondary'
                         }`}
                       >
                         {sender?.name?.charAt(0).toUpperCase() || '?'}
@@ -1657,16 +1638,13 @@ export function ChatArea({ channel, showMembers, onToggleMembers }: ChatAreaProp
                   </div>
 
                   {/* Content */}
-                  <div className={`flex-1 min-w-0 ${isMentioned ? 'border-l-2 border-primary/40 pl-2' : ''} flex flex-col ${isOwn ? 'items-end' : 'items-start'}`}>
+                  <div className={`flex-1 min-w-0 ${isMentioned ? 'border-l-2 border-accent/40 pl-2' : ''} flex flex-col ${isOwn ? 'items-end' : 'items-start'}`}>
                     {showAvatar && (
-                      <div className="flex items-baseline gap-2">
+                      <div className={`flex items-baseline gap-2 mb-0.5 ${isOwn ? 'flex-row-reverse' : ''}`}>
                         <span className="font-semibold text-sm text-foreground">
                           {sender?.name || 'Unknown'}
                         </span>
-                        <span className="text-xs text-muted capitalize">
-                          {sender?.role === 'tl' ? 'TL' : sender?.role}
-                        </span>
-                        <span className="text-xs text-muted">
+                        <span className="text-[10px] text-muted/70">
                           {formatMessageTime(msg.created_at)}
                         </span>
                       </div>
@@ -1689,11 +1667,11 @@ export function ChatArea({ channel, showMembers, onToggleMembers }: ChatAreaProp
                     {/* Editing UI / Deleted placeholder / Message content */}
                     {editingMessageId === msg.id ? (
                       <div className={`inline-block max-w-[70%] ${isOwn ? 'ml-auto text-right' : ''}`}>
-                        <div className={`rounded-lg px-3 py-2 ${isOwn ? 'bg-primary/90 text-white' : 'bg-surface border border-border text-foreground'}`}>
+                        <div className={`rounded-2xl px-4 py-2.5 ${isOwn ? 'msg-bubble-own' : 'msg-bubble-other'}`}>
                           <input
                             value={editingText}
                             onChange={(e) => setEditingText(e.target.value)}
-                            className="w-full px-2 py-1 rounded bg-transparent border border-border text-foreground"
+                            className="w-full px-2 py-1 rounded-lg bg-white/10 border border-white/20 text-inherit"
                           />
                           <div className="mt-2 flex gap-2 justify-end">
                             <button onClick={() => handleSaveEdit(false)} className="px-2 py-1 bg-primary text-white rounded">Save</button>
@@ -1706,7 +1684,7 @@ export function ChatArea({ channel, showMembers, onToggleMembers }: ChatAreaProp
                       </div>
                     ) : msg.is_deleted ? (
                       <div className={`inline-block max-w-[70%] ${isOwn ? 'ml-auto text-right' : ''}`}>
-                        <div className={`rounded-lg px-3 py-2 ${isOwn ? 'bg-primary/20 text-primary' : 'bg-surface border border-border text-muted italic'}`}>
+                        <div className="rounded-2xl px-4 py-2.5 bg-surface-hover/50 border border-border/50 text-muted italic">
                           <p className="text-sm">Message deleted</p>
                         </div>
                       </div>
@@ -1717,7 +1695,7 @@ export function ChatArea({ channel, showMembers, onToggleMembers }: ChatAreaProp
                           const hasInlineImages = parts.some(p => p.type === 'image');
                           return (
                             <div className={`inline-block max-w-[70%] ${isOwn ? 'ml-auto text-right' : ''}`}>
-                              <div className={`rounded-lg px-3 py-2 ${isOwn ? 'bg-primary text-white' : 'bg-surface border border-border text-foreground'}`}>
+                              <div className={`px-4 py-2.5 ${isOwn ? 'msg-bubble-own' : 'msg-bubble-other'}`}>
                                 <p className="text-sm break-words whitespace-pre-wrap">
                                   {parts.map((part, pi) => {
                                     if (part.type === 'text') {
@@ -1899,14 +1877,14 @@ export function ChatArea({ channel, showMembers, onToggleMembers }: ChatAreaProp
       </div>
 
       {/* Input area */}
-      <div className="border-t border-border p-4 shrink-0 fixed bottom-0 left-0 right-0 bg-background/95 backdrop-blur-sm z-40 sm:static sm:bg-transparent sm:backdrop-blur-0 sm:z-auto sm:relative sm:border-t sm:border-border sm:p-4 rounded-t-lg sm:rounded-none">
+      <div className="chat-input-container shrink-0">
         {/* Typing indicator */}
         {Object.keys(typingUsers).length > 0 && (
-          <div className="mb-2 flex items-center gap-2 text-xs text-muted">
-            <div className="flex gap-0.5">
-              <span className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-              <span className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-              <span className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+          <div className="mb-2 flex items-center gap-2 text-xs text-muted animate-fade-in">
+            <div className="flex gap-1">
+              <div className="typing-dot" />
+              <div className="typing-dot" />
+              <div className="typing-dot" />
             </div>
             <span>
               {(() => {
@@ -1920,7 +1898,7 @@ export function ChatArea({ channel, showMembers, onToggleMembers }: ChatAreaProp
         )}
         {/* Reply preview bar */}
         {replyTo && (
-          <div className="mb-2 flex items-center gap-2 px-3 py-2 bg-primary/5 border border-primary/20 rounded-lg">
+          <div className="mb-2 flex items-center gap-2 px-3 py-2 bg-primary/5 border border-primary/20 rounded-xl animate-fade-in-down">
             <Reply className="w-4 h-4 text-primary shrink-0" />
             <div className="flex-1 min-w-0">
               <span className="text-xs font-medium text-primary">
@@ -1930,236 +1908,188 @@ export function ChatArea({ channel, showMembers, onToggleMembers }: ChatAreaProp
                 {replyTo.text || (replyTo.attachment_name ? `📎 ${replyTo.attachment_name}` : 'Attachment')}
               </p>
             </div>
-            <button
-              onClick={() => setReplyTo(null)}
-              className="text-muted hover:text-danger shrink-0"
-            >
+            <button onClick={() => setReplyTo(null)} className="text-muted hover:text-danger shrink-0 p-1 rounded-lg hover:bg-danger/5 transition-colors">
               <X className="w-4 h-4" />
             </button>
           </div>
         )}
         {attachmentError && (
-          <div className="mb-2 px-3 py-2 bg-danger/10 text-danger text-sm rounded-lg border border-danger/20">
+          <div className="mb-2 px-3 py-2 bg-danger/10 text-danger text-sm rounded-xl border border-danger/20 animate-fade-in">
             {attachmentError}
           </div>
         )}
         {attachment && (
-          <div className="mb-2 flex items-start gap-3 px-3 py-2 bg-surface border border-border rounded-lg">
+          <div className="mb-2 flex items-start gap-3 px-3 py-2 bg-surface border border-border rounded-xl animate-fade-in-up">
             {attachment.isImage ? (
-              <img
-                src={attachment.url}
-                alt="Preview"
-                className="h-24 max-w-[200px] object-contain rounded-lg shrink-0"
-              />
+              <img src={attachment.url} alt="Preview" className="h-20 max-w-[180px] object-contain rounded-lg shrink-0" />
             ) : (
-              <div className="h-16 w-16 bg-surface-hover rounded-lg border border-border flex items-center justify-center shrink-0">
-                <FileText className="w-6 h-6 text-primary" />
+              <div className="h-14 w-14 bg-surface-hover rounded-xl border border-border flex items-center justify-center shrink-0">
+                <FileText className="w-5 h-5 text-primary" />
               </div>
             )}
             <div className="flex-1 min-w-0 self-center">
-              <p className="text-xs text-muted">
-                {attachment.isImage ? 'Image attached' : 'Link attached'}
-              </p>
+              <p className="text-xs text-muted">{attachment.isImage ? 'Image attached' : 'Link attached'}</p>
             </div>
-            <button
-              onClick={() => {
-                setAttachment(null);
-                setAttachmentError('');
-              }}
-              className="text-muted hover:text-danger shrink-0 self-start"
-            >
+            <button onClick={() => { setAttachment(null); setAttachmentError(''); }} className="text-muted hover:text-danger shrink-0 self-start p-1 rounded-lg hover:bg-danger/5">
               <X className="w-4 h-4" />
             </button>
           </div>
         )}
         {fileAttachment && (
-          <div className="mb-2 flex items-start gap-3 px-3 py-2 bg-surface border border-border rounded-lg">
+          <div className="mb-2 flex items-start gap-3 px-3 py-2 bg-surface border border-border rounded-xl animate-fade-in-up">
             {fileAttachment.type.startsWith('image/') ? (
-              <img
-                src={URL.createObjectURL(fileAttachment)}
-                alt="Preview"
-                className="h-24 max-w-[200px] object-contain rounded-lg shrink-0"
-              />
+              <img src={URL.createObjectURL(fileAttachment)} alt="Preview" className="h-20 max-w-[180px] object-contain rounded-lg shrink-0" />
             ) : (
-              <div className="h-16 w-16 bg-surface-hover rounded-lg border border-border flex items-center justify-center shrink-0">
-                <FileText className="w-6 h-6 text-primary" />
+              <div className="h-14 w-14 bg-surface-hover rounded-xl border border-border flex items-center justify-center shrink-0">
+                <FileText className="w-5 h-5 text-primary" />
               </div>
             )}
             <div className="flex-1 min-w-0 self-center">
               <p className="text-sm font-medium text-foreground truncate">{fileAttachment.name}</p>
               <p className="text-xs text-muted">{formatFileSize(fileAttachment.size)}</p>
             </div>
-            <button
-              onClick={() => {
-                setFileAttachment(null);
-                setAttachmentError('');
-              }}
-              className="text-muted hover:text-danger shrink-0 self-start"
-            >
+            <button onClick={() => { setFileAttachment(null); setAttachmentError(''); }} className="text-muted hover:text-danger shrink-0 self-start p-1 rounded-lg hover:bg-danger/5">
               <X className="w-4 h-4" />
             </button>
           </div>
         )}
-        <form onSubmit={handleSend} className="flex items-end gap-2">
-          <input
-            key={fileInputKey}
-            ref={fileInputRef}
-            type="file"
-            className="hidden"
-            onChange={handleFileSelect}
-            accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.zip,.rar,.7z,.mp4,.webm,.mp3,.wav,.ogg"
-          />
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            className="p-2.5 text-muted hover:text-foreground hover:bg-surface-hover rounded-lg transition-colors shrink-0 border border-border"
-            title="Attach file (max 5MB)"
-          >
-            <Paperclip className="w-5 h-5" />
-          </button>
-          <div className="relative flex-1">
+        <form onSubmit={handleSend} className="flex flex-col gap-2">
+          {/* Main input row */}
+          <div className="flex items-end gap-2">
             <input
-              ref={messageInputRef}
-              type="text"
-              value={text}
-              onChange={handleInputChange}
-              onKeyDown={handleInputKeyDown}
-              onPaste={handlePaste}
-              placeholder={`Message #${channel.name} (Paste images or URLs)`}
-              maxLength={1000}
-              className="w-full px-4 py-2.5 bg-surface border border-border rounded-lg text-foreground placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition-colors"
+              key={fileInputKey}
+              ref={fileInputRef}
+              type="file"
+              className="hidden"
+              onChange={handleFileSelect}
+              accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.zip,.rar,.7z,.mp4,.webm,.mp3,.wav,.ogg"
             />
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="p-2.5 text-muted hover:text-primary hover:bg-primary-light rounded-xl transition-all duration-200 shrink-0"
+              title="Attach file (max 5MB)"
+            >
+              <Paperclip className="w-5 h-5" />
+            </button>
+            <div className="relative flex-1">
+              <input
+                ref={messageInputRef}
+                type="text"
+                value={text}
+                onChange={handleInputChange}
+                onKeyDown={handleInputKeyDown}
+                onPaste={handlePaste}
+                placeholder={`Message #${channel.name}`}
+                maxLength={1000}
+                className="chat-input-field"
+              />
 
-            {/* Grammar/spell suggestions */}
-            {showChecks && suggestions.length > 0 && (
-              <div className="mt-2 bg-surface border border-border rounded-lg p-2 max-h-44 overflow-auto">
-                <div className="flex items-center justify-between mb-2">
-                  <div className="text-xs text-muted">Suggestions ({suggestions.length})</div>
-                  <div className="flex items-center gap-2">
-                    {showUndo ? (
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs text-muted">Applied {appliedCount} changes</span>
-                        <button
-                          type="button"
-                          onClick={handleUndoApplyAll}
-                          className="px-2 py-1 text-sm border rounded"
-                        >
-                          Undo
-                        </button>
-                      </div>
-                    ) : (
-                      <>
-                        <button
-                          type="button"
-                          onClick={() => applyAllSuggestions()}
-                          className="px-2 py-1 text-sm bg-primary/10 text-primary rounded"
-                        >
-                          Apply all
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setShowChecks(false)}
-                          className="px-2 py-1 text-sm border rounded"
-                        >
-                          Dismiss
-                        </button>
-                      </>
-                    )}
-                  </div>
-                </div>
-                {suggestions.map((m, idx) => (
-                  <div key={idx} className="mb-2">
-                    <div className="text-xs text-muted">{m.message}</div>
-                    <div className="flex gap-2 mt-1 flex-wrap">
-                      {(m.replacements || []).slice(0, 4).map((r: any, ri: number) => (
-                        <button
-                          key={ri}
-                          type="button"
-                          onClick={() => applySuggestion(idx, r.value || r)}
-                          className="px-2 py-1 text-sm bg-primary/10 text-primary rounded"
-                        >
-                          {r.value || r}
-                        </button>
-                      ))}
+              {/* Grammar/spell suggestions */}
+              {showChecks && suggestions.length > 0 && (
+                <div className="absolute bottom-full left-0 right-0 mb-2 bg-surface border border-border rounded-xl p-3 max-h-44 overflow-auto shadow-lg animate-fade-in-up z-20">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="text-xs font-medium text-foreground">Suggestions ({suggestions.length})</div>
+                    <div className="flex items-center gap-1.5">
+                      {showUndo ? (
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-muted">Applied {appliedCount}</span>
+                          <button type="button" onClick={handleUndoApplyAll} className="px-2 py-1 text-xs border border-border rounded-lg hover:bg-surface-hover">Undo</button>
+                        </div>
+                      ) : (
+                        <>
+                          <button type="button" onClick={() => applyAllSuggestions()} className="px-2 py-1 text-xs bg-primary/10 text-primary rounded-lg font-medium">Apply all</button>
+                          <button type="button" onClick={() => setShowChecks(false)} className="px-2 py-1 text-xs border border-border rounded-lg hover:bg-surface-hover">Dismiss</button>
+                        </>
+                      )}
                     </div>
                   </div>
-                ))}
-              </div>
-            )}
-
-            {/* Mention suggestions dropdown (render fixed to avoid clipping/z issues) */}
-              {mentionOpen && mentionResults.length > 0 && suggestionPos && (
-              <div
-                style={{
-                  left: suggestionPos.left,
-                  width: suggestionPos.width,
-                  ...(suggestionPos.top ? { top: suggestionPos.top } : {}),
-                  ...(suggestionPos.bottom ? { bottom: suggestionPos.bottom } : {}),
-                }}
-                className="mention-suggestions fixed bg-surface border border-border rounded-lg shadow-lg z-[9999] max-w-full"
-              >
-                <ul className="max-h-48 overflow-auto">
-                  {mentionResults.map((m, idx) => (
-                    <li
-                      key={m.id}
-                      onMouseDown={(ev) => { ev.preventDefault(); selectMention(m); }}
-                      onMouseEnter={() => setMentionSelectedIndex(idx)}
-                      className={`px-3 py-2 cursor-pointer ${mentionSelectedIndex === idx ? 'bg-primary/10' : 'hover:bg-surface-hover'}`}
-                    >
-                      <div className="text-sm font-medium text-foreground">{m.name}</div>
-                      <div className="text-xs text-muted">{(m as any).email}</div>
-                    </li>
+                  {suggestions.map((m, idx) => (
+                    <div key={idx} className="mb-2">
+                      <div className="text-xs text-muted">{m.message}</div>
+                      <div className="flex gap-1.5 mt-1 flex-wrap">
+                        {(m.replacements || []).slice(0, 4).map((r: any, ri: number) => (
+                          <button key={ri} type="button" onClick={() => applySuggestion(idx, r.value || r)} className="px-2 py-1 text-xs bg-primary/10 text-primary rounded-lg font-medium hover:bg-primary/20 transition-colors">{r.value || r}</button>
+                        ))}
+                      </div>
+                    </div>
                   ))}
-                </ul>
-              </div>
-            )}
+                </div>
+              )}
+
+              {/* Mention suggestions dropdown */}
+              {mentionOpen && mentionResults.length > 0 && suggestionPos && (
+                <div
+                  style={{
+                    left: suggestionPos.left,
+                    width: suggestionPos.width,
+                    ...(suggestionPos.top ? { top: suggestionPos.top } : {}),
+                    ...(suggestionPos.bottom ? { bottom: suggestionPos.bottom } : {}),
+                  }}
+                  className="mention-suggestions fixed z-[9999] max-w-full animate-fade-in"
+                >
+                  <ul className="max-h-48 overflow-auto">
+                    {mentionResults.map((m, idx) => (
+                      <li
+                        key={m.id}
+                        onMouseDown={(ev) => { ev.preventDefault(); selectMention(m); }}
+                        onMouseEnter={() => setMentionSelectedIndex(idx)}
+                        className={`px-3 py-2.5 cursor-pointer transition-colors ${mentionSelectedIndex === idx ? 'bg-primary/10' : 'hover:bg-surface-hover'}`}
+                      >
+                        <div className="text-sm font-medium text-foreground">{m.name}</div>
+                        <div className="text-xs text-muted">{(m as any).email}</div>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowGifPicker(true)}
+              className="p-2.5 text-xs font-bold text-muted hover:text-accent hover:bg-accent-light rounded-xl transition-all duration-200 shrink-0 hidden sm:flex"
+              title="Search GIFs"
+            >
+              GIF
+            </button>
+            <button
+              type="submit"
+              disabled={(!text.trim() && !attachment && !fileAttachment) || sending}
+              className="p-2.5 btn-primary rounded-xl disabled:opacity-40 disabled:cursor-not-allowed disabled:shadow-none disabled:transform-none shrink-0"
+            >
+              {sending ? (
+                <Loader2 className="w-5 h-5 animate-spin" />
+              ) : (
+                <Send className="w-5 h-5" />
+              )}
+            </button>
           </div>
-          <div className="flex items-center gap-2">
+          {/* Tools row - hidden on mobile */}
+          <div className="hidden sm:flex items-center gap-2 px-1">
             <select
               value={checkMode}
               onChange={(e) => setCheckMode(e.target.value as any)}
-              className="text-xs px-2 py-1 rounded border border-border bg-surface text-foreground"
-              title="Select check mode"
+              className="text-xs px-2 py-1 rounded-lg border border-border bg-surface text-foreground"
+              title="Check mode"
             >
               <option value="both">Both</option>
               <option value="grammar">Grammar</option>
               <option value="spelling">Spelling</option>
             </select>
-
-            <label className="text-xs text-muted flex items-center gap-1">
-              <input type="checkbox" checked={checkBeforeSend} onChange={(e) => setCheckBeforeSend(e.target.checked)} />
-              <span>Check before send</span>
+            <label className="text-xs text-muted flex items-center gap-1.5 cursor-pointer">
+              <input type="checkbox" checked={checkBeforeSend} onChange={(e) => setCheckBeforeSend(e.target.checked)} className="rounded" />
+              <span>Auto-check</span>
             </label>
-
             <button
               type="button"
               onClick={() => handleCheck(checkMode)}
-              className="px-2.5 py-2 text-xs font-bold text-muted hover:text-foreground hover:bg-surface-hover rounded-lg transition-colors shrink-0 border border-border mr-1"
+              className="px-2.5 py-1.5 text-xs font-medium text-muted hover:text-primary hover:bg-primary-light rounded-lg transition-all duration-200"
               title="Check spelling / grammar"
               disabled={checksLoading || !text.trim()}
             >
-              {checksLoading ? 'Checking...' : 'Check'}
+              {checksLoading ? 'Checking...' : '✓ Check'}
             </button>
           </div>
-          <button
-            type="button"
-            onClick={() => setShowGifPicker(true)}
-            className="px-2.5 py-2 text-xs font-bold text-muted hover:text-foreground hover:bg-surface-hover rounded-lg transition-colors shrink-0 border border-border"
-            title="Search GIFs"
-          >
-            GIF
-          </button>
-          <button
-            type="submit"
-            disabled={(!text.trim() && !attachment && !fileAttachment) || sending}
-            className="p-2.5 bg-primary hover:bg-primary-hover text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
-          >
-            {sending ? (
-              <Loader2 className="w-5 h-5 animate-spin" />
-            ) : (
-              <Send className="w-5 h-5" />
-            )}
-          </button>
         </form>
       </div>
 

@@ -19,7 +19,7 @@ export function MemberList({ channel }: MemberListProps) {
   const { user: currentUser } = useAuth();
   const [members, setMembers] = useState<MemberWithStatus[]>([]);
   const [activeInChannel, setActiveInChannel] = useState<Set<string>>(new Set());
-  const [statusTimestamps, setStatusTimestamps] = useState<Record<string, { timestamp: number; is_online: boolean }>>({}); // Track when status changed
+  const [statusTimestamps, setStatusTimestamps] = useState<Record<string, { timestamp: number; is_online: boolean }>>({});
   const supabase = createClient();
 
   useEffect(() => {
@@ -27,7 +27,6 @@ export function MemberList({ channel }: MemberListProps) {
       const { data } = await supabase.rpc('get_campaign_members', { campaign_uuid: channel.campaign_id });
       if (data) {
         setMembers(data);
-        // Initialize status timestamps using last_online_at and last_offline_at from database
         const initialTimestamps: Record<string, { timestamp: number; is_online: boolean }> = {};
         data.forEach((member: any) => {
           const statusTime = member.is_online 
@@ -45,7 +44,6 @@ export function MemberList({ channel }: MemberListProps) {
 
     fetchMembers();
 
-    // Campaign-wide presence (for online status everywhere)
     const campaignPresence = supabase.channel(`presence:${channel.campaign_id}`, {
       config: { presence: { key: currentUser?.id } },
     });
@@ -56,7 +54,6 @@ export function MemberList({ channel }: MemberListProps) {
         const now = Date.now();
         const onlineIds = new Set(Object.keys(state));
         
-        // Update members and track status changes
         setMembers(prev => {
           const updated = prev.map(m => {
             const isOnline = onlineIds.has(m.id);
@@ -69,7 +66,6 @@ export function MemberList({ channel }: MemberListProps) {
             };
           });
           
-          // Update timestamps only when status CHANGES
           setStatusTimestamps(ts => {
             const newTs = { ...ts };
             updated.forEach(m => {
@@ -77,10 +73,7 @@ export function MemberList({ channel }: MemberListProps) {
               const newStatus = m.is_online;
               const presenceData = state[m.id]?.[0] as any;
               
-              // Initialize if not exists OR status changed
               if (!ts[m.id] || oldStatus !== newStatus) {
-                // For online users: use online_at from presence
-                // For offline users: use database last_offline_at or current time
                 const statusTime = newStatus
                   ? (presenceData?.online_at ? new Date(presenceData.online_at).getTime() : now)
                   : (m.last_offline_at ? new Date(m.last_offline_at).getTime() : now);
@@ -94,7 +87,6 @@ export function MemberList({ channel }: MemberListProps) {
         });
       })
       .on('presence', { event: 'leave' }, async ({ key }: any) => {
-        // User went offline - update database
         const offlineUser = members.find(m => m.id === key);
         if (offlineUser) {
           try {
@@ -103,7 +95,6 @@ export function MemberList({ channel }: MemberListProps) {
               .update({ is_online: false, last_offline_at: new Date().toISOString() })
               .eq('id', offlineUser.id);
             
-            // Update offline timestamp in state
             setStatusTimestamps(ts => ({
               ...ts,
               [offlineUser.id]: { timestamp: Date.now(), is_online: false },
@@ -115,27 +106,23 @@ export function MemberList({ channel }: MemberListProps) {
       })
       .subscribe(async (status) => {
         if (status === 'SUBSCRIBED' && currentUser) {
-          // Track online status and update database
           await campaignPresence.track({
             user_id: currentUser.id,
             online_at: new Date().toISOString(),
             last_seen: new Date().toISOString(),
           });
           
-          // Update database with online status (if columns exist)
           try {
             await supabase
               .from('users')
               .update({ is_online: true, last_online_at: new Date().toISOString() })
               .eq('id', currentUser.id);
           } catch (err) {
-            // Columns may not exist yet - migration not run
-            console.log('Could not update user status (run supabase-tracking.sql):', err);
+            console.log('Could not update user status:', err);
           }
         }
       });
 
-    // Channel-specific presence (for "currently viewing" indicator)
     const channelPresence = supabase.channel(`presence:${channel.id}`, {
       config: { presence: { key: currentUser?.id } },
     });
@@ -147,7 +134,6 @@ export function MemberList({ channel }: MemberListProps) {
           Object.values(state).flat().map((p: any) => p.user_id || currentUser?.id)
         );
         setActiveInChannel(viewingIds);
-        console.log('Users viewing channel:', viewingIds);
       })
       .subscribe(async (status) => {
         if (status === 'SUBSCRIBED' && currentUser) {
@@ -170,12 +156,12 @@ export function MemberList({ channel }: MemberListProps) {
   const onlineMembers = members.filter(m => m.is_online);
   const offlineMembers = members.filter(m => !m.is_online);
 
-  const getRoleBadgeColor = (role: string) => {
+  const getRoleBadgeStyle = (role: string) => {
     switch (role) {
-      case 'admin': return 'bg-danger/10 text-danger';
-      case 'manager': return 'bg-primary/10 text-primary';
-      case 'tl': return 'bg-warning/10 text-warning';
-      default: return 'bg-surface-hover text-muted';
+      case 'admin': return 'bg-danger/10 text-danger border-danger/20';
+      case 'manager': return 'bg-secondary-light text-secondary border-secondary/20';
+      case 'tl': return 'bg-accent-light text-accent border-accent/20';
+      default: return 'bg-surface-hover text-muted border-border';
     }
   };
 
@@ -188,7 +174,6 @@ export function MemberList({ channel }: MemberListProps) {
     }
   };
 
-  // Calculate duration since status change
   const formatDuration = (ms: number): string => {
     const seconds = Math.floor(ms / 1000);
     const minutes = Math.floor(seconds / 60);
@@ -207,29 +192,31 @@ export function MemberList({ channel }: MemberListProps) {
     
     const durationMs = Date.now() - record.timestamp;
     const duration = formatDuration(durationMs);
-    return isOnline ? `Online for ${duration}` : `Offline for ${duration}`;
+    return isOnline ? `Online ${duration}` : `Offline ${duration}`;
   };
 
-  // Update durations every 30 seconds
   useEffect(() => {
     const timer = setInterval(() => {
-      // Trigger re-render by updating a dummy state
       setMembers(prev => [...prev]);
-    }, 30000); // Update every 30 seconds for performance
+    }, 30000);
 
     return () => clearInterval(timer);
   }, []);
 
   return (
     <div className="w-60 bg-surface border-l border-border flex flex-col shrink-0">
-      <div className="p-3 border-b border-border">
-        <h3 className="text-sm font-semibold text-foreground">Members — {members.length}</h3>
+      <div className="p-4 border-b border-border">
+        <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
+          Members
+          <span className="text-xs font-normal text-muted bg-surface-hover px-1.5 py-0.5 rounded-md">{members.length}</span>
+        </h3>
       </div>
       <div className="flex-1 overflow-y-auto p-2">
         {/* Online */}
         {onlineMembers.length > 0 && (
-          <div className="mb-3">
-            <p className="text-xs font-semibold text-muted uppercase tracking-wider px-2 mb-1">
+          <div className="mb-4">
+            <p className="text-[10px] font-semibold text-primary uppercase tracking-wider px-2 mb-2 flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse-soft" />
               Online — {onlineMembers.length}
             </p>
             {onlineMembers.map(member => {
@@ -238,26 +225,26 @@ export function MemberList({ channel }: MemberListProps) {
               return (
                 <div
                   key={member.id}
-                  className={`flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-surface-hover transition-colors ${isViewingChannel ? 'bg-primary/5' : ''}`}
+                  className={`flex items-center gap-2.5 px-2.5 py-2 rounded-xl transition-all duration-200 ${isViewingChannel ? 'bg-primary-light' : 'hover:bg-surface-hover'}`}
                   title={isViewingChannel ? 'Viewing this channel' : ''}
                 >
                   <div className="relative shrink-0">
-                    <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center text-primary font-semibold text-xs">
+                    <div className="w-8 h-8 rounded-full avatar-gradient flex items-center justify-center text-xs font-bold">
                       {member.name.charAt(0).toUpperCase()}
                     </div>
-                    <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-success rounded-full border-2 border-surface" />
+                    <div className="online-dot absolute -bottom-0.5 -right-0.5" />
                     {isViewingChannel && (
-                      <Eye className="absolute -top-1 -right-1 w-3 h-3 text-primary animate-pulse" />
+                      <Eye className="absolute -top-1 -right-1 w-3 h-3 text-primary" />
                     )}
                   </div>
                   <div className="min-w-0 flex-1">
-                    <p className="text-sm text-foreground truncate">{member.name}</p>
+                    <p className="text-sm text-foreground truncate font-medium">{member.name}</p>
                     <div className="flex items-center gap-1.5">
-                      <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${getRoleBadgeColor(member.role)}`}>
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded-md font-medium border ${getRoleBadgeStyle(member.role)}`}>
                         {getRoleLabel(member.role)}
                       </span>
                       {statusDuration && (
-                        <span className="flex items-center gap-0.5 text-[10px] text-success">
+                        <span className="flex items-center gap-0.5 text-[10px] text-primary/80">
                           <Clock className="w-2.5 h-2.5" />
                           {statusDuration}
                         </span>
@@ -273,27 +260,27 @@ export function MemberList({ channel }: MemberListProps) {
         {/* Offline */}
         {offlineMembers.length > 0 && (
           <div>
-            <p className="text-xs font-semibold text-muted uppercase tracking-wider px-2 mb-1">
+            <p className="text-[10px] font-semibold text-muted uppercase tracking-wider px-2 mb-2">
               Offline — {offlineMembers.length}
             </p>
             {offlineMembers.map(member => {
               const statusDuration = getStatusDuration(member.id, false);
               return (
-                <div key={member.id} className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-surface-hover transition-colors">
-                  <div className="relative shrink-0 opacity-60">
-                    <div className="w-8 h-8 rounded-full bg-surface-hover flex items-center justify-center text-muted font-semibold text-xs">
+                <div key={member.id} className="flex items-center gap-2.5 px-2.5 py-2 rounded-xl hover:bg-surface-hover transition-all duration-200">
+                  <div className="relative shrink-0 opacity-50">
+                    <div className="w-8 h-8 rounded-full bg-surface-hover flex items-center justify-center text-muted font-bold text-xs">
                       {member.name.charAt(0).toUpperCase()}
                     </div>
-                    <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-muted/40 rounded-full border-2 border-surface" />
+                    <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-muted/30 rounded-full border-2 border-surface" />
                   </div>
                   <div className="min-w-0 flex-1">
-                    <p className="text-sm text-foreground/70 truncate">{member.name}</p>
+                    <p className="text-sm text-foreground/60 truncate">{member.name}</p>
                     <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium opacity-70 ${getRoleBadgeColor(member.role)}`}>
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded-md font-medium opacity-60 border ${getRoleBadgeStyle(member.role)}`}>
                         {getRoleLabel(member.role)}
                       </span>
                       {statusDuration && (
-                        <span className="flex items-center gap-0.5 text-[10px] text-muted/80 whitespace-nowrap">
+                        <span className="flex items-center gap-0.5 text-[10px] text-muted/60 whitespace-nowrap">
                           <Clock className="w-2.5 h-2.5" />
                           {statusDuration}
                         </span>
