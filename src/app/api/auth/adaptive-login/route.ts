@@ -7,22 +7,14 @@ import { extractClientIp, createDeviceHash, parseDeviceName, isSessionValid } fr
 /**
  * Adaptive MFA Login Flow
  * POST /api/auth/adaptive-login
- * 
- * Body: { action: 'check_device' | 'verify_otp' }
- * 
- * 1. check_device: Verify password and check if device is trusted
- *    - If trusted: Return login_success
- *    - If new: Return needs_otp, send OTP email
- * 
- * 2. verify_otp: Verify OTP code and create login session
  */
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { action, email, password, code } = body;
+    const { action, email, password, otp: otpCode, user_id } = body;
 
-    console.log(`[Adaptive Login] Received action: ${action}, email: ${email}`);
+    console.log(`[Adaptive Login] Action: ${action}, Email: ${email}`);
 
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
     const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
@@ -244,18 +236,18 @@ export async function POST(request: NextRequest) {
 
     // ============ ACTION: Verify OTP ============
     if (action === 'verify_otp') {
-      if (!email || !body.otp || body.otp.length !== 6 || !body.user_id) {
+      if (!email || !otpCode || otpCode.length !== 6 || !user_id) {
         return NextResponse.json({ error: 'Invalid request parameters' }, { status: 400 });
       }
 
-      const userId = body.user_id;
+      const userId = user_id;
 
       // Verify the OTP code
       const { data: mfaCodes } = await serviceSupabase
         .from('mfa_codes')
         .select('*')
         .eq('user_id', userId)
-        .eq('code', body.otp)
+        .eq('code', otpCode)
         .gt('expires_at', new Date().toISOString())
         .is('used_at', null)
         .order('created_at', { ascending: false })
@@ -318,11 +310,11 @@ export async function POST(request: NextRequest) {
 
     // ============ ACTION: Resend OTP ============
     if (action === 'resend_otp') {
-      if (!email || !body.user_id) {
+      if (!email || !user_id) {
         return NextResponse.json({ error: 'Email and user_id required' }, { status: 400 });
       }
 
-      const userId = body.user_id;
+      const userId = user_id;
 
       // Generate new OTP code
       const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
