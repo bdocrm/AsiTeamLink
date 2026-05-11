@@ -69,6 +69,8 @@ export async function POST(request: NextRequest) {
       });
 
       console.log(`[Check Device] Password auth result:`, { error: authError?.message, hasUser: !!authData?.user });
+
+      if (authError || !authData.user) {
         // Log failed password attempt
         await serviceSupabase.from('login_audit').insert({
           user_id: null,
