@@ -1,4 +1,5 @@
 import { createServerClient } from '@supabase/ssr';
+import { cookies } from 'next/headers';
 import { NextRequest, NextResponse } from 'next/server';
 
 export async function GET(request: NextRequest) {
@@ -32,17 +33,18 @@ export async function GET(request: NextRequest) {
         throw new Error('Missing Supabase configuration');
       }
 
+      const cookieStore = await cookies();
+      
       const supabase = createServerClient(supabaseUrl, supabaseAnonKey, {
         cookies: {
-          getAll() {
-            return request.cookies.getAll();
+          get(name: string) {
+            return cookieStore.get(name)?.value;
           },
-          setAll(cookiesToSet) {
-            const response = NextResponse.next();
-            cookiesToSet.forEach(({ name, value, options }) => {
-              response.cookies.set(name, value, options);
-            });
-            return response;
+          set(name: string, value: string, options: any) {
+            cookieStore.set(name, value, options);
+          },
+          remove(name: string, options: any) {
+            cookieStore.delete(name);
           },
         },
       });
