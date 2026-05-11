@@ -15,6 +15,7 @@ import {
   CheckCircle,
   Palette,
 } from 'lucide-react';
+import MFASettings from '@/components/settings/MFASettings';
 import type { ThemePreference } from '@/lib/types';
 
 export default function SettingsPage() {
@@ -159,6 +160,11 @@ export default function SettingsPage() {
               </button>
             ))}
           </div>
+        </div>
+
+        {/* Security section - MFA */}
+        <div className="bg-surface border border-border rounded-xl p-6">
+          <MFASettings mfaEnabled={user?.mfa_enabled || false} onStatusChange={refreshUser} />
         </div>
       </div>
     </div>

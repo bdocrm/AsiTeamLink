@@ -11,6 +11,8 @@ export interface User {
   status: UserStatus;
   is_online: boolean;
   theme_preference: ThemePreference;
+  mfa_enabled: boolean;
+  mfa_method: 'email' | 'totp';
   created_at: string;
   last_online_at?: string | null;
   last_offline_at?: string | null;

@@ -63,6 +63,13 @@ export default function LoginPage() {
         setLoading(false);
         return;
       }
+
+      // Check if MFA is enabled
+      if (profile?.mfa_enabled) {
+        // Redirect to MFA verification page
+        router.push('/auth/mfa-verify');
+        return;
+      }
     }
 
     router.push('/chat');
