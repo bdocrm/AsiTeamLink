@@ -1,4 +1,4 @@
-export type UserRole = 'admin' | 'manager' | 'tl' | 'agent';
+export type UserRole = 'admin' | 'manager' | 'tl' | 'agent' | 'compliance';
 export type UserStatus = 'pending' | 'approved' | 'rejected';
 export type ThemePreference = 'light' | 'dark' | 'system';
 

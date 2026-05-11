@@ -24,21 +24,36 @@ export function MemberList({ channel }: MemberListProps) {
 
   useEffect(() => {
     const fetchMembers = async () => {
-      const { data } = await supabase.rpc('get_campaign_members', { campaign_uuid: channel.campaign_id });
-      if (data) {
-        setMembers(data);
-        const initialTimestamps: Record<string, { timestamp: number; is_online: boolean }> = {};
-        data.forEach((member: any) => {
-          const statusTime = member.is_online 
-            ? (member.last_online_at ? new Date(member.last_online_at).getTime() : Date.now())
-            : (member.last_offline_at ? new Date(member.last_offline_at).getTime() : Date.now());
-          
-          initialTimestamps[member.id] = {
-            timestamp: statusTime,
-            is_online: member.is_online || false,
-          };
-        });
-        setStatusTimestamps(initialTimestamps);
+      // Get members specifically in this channel
+      const { data } = await supabase
+        .from('channel_members')
+        .select('user_id')
+        .eq('channel_id', channel.id);
+
+      if (data && data.length > 0) {
+        const userIds = data.map(cm => cm.user_id);
+        
+        // Fetch user details for channel members only
+        const { data: members } = await supabase
+          .from('users')
+          .select('*')
+          .in('id', userIds);
+
+        if (members) {
+          setMembers(members);
+          const initialTimestamps: Record<string, { timestamp: number; is_online: boolean }> = {};
+          members.forEach((member: any) => {
+            const statusTime = member.is_online 
+              ? (member.last_online_at ? new Date(member.last_online_at).getTime() : Date.now())
+              : (member.last_offline_at ? new Date(member.last_offline_at).getTime() : Date.now());
+            
+            initialTimestamps[member.id] = {
+              timestamp: statusTime,
+              is_online: member.is_online || false,
+            };
+          });
+          setStatusTimestamps(initialTimestamps);
+        }
       }
     };
 

@@ -1784,9 +1784,19 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
                                     />
                                   </a>
                                 </div>
+                              ) : !msg.attachment_name || msg.attachment_name === 'Link' ? (
+                                <a
+                                  href={msg.attachment_url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className={`inline-flex items-center px-3 py-2 rounded-lg ${isOwn ? 'text-white/90 hover:text-white' : 'text-primary hover:text-primary-hover'} hover:underline break-all`}
+                                >
+                                  {msg.attachment_url.substring(0, 60)}
+                                </a>
                               ) : (
                                 <a
                                   href={msg.attachment_url}
+                                  download={msg.attachment_name}
                                   target="_blank"
                                   rel="noopener noreferrer"
                                   className={`inline-flex items-center gap-2 px-3 py-2 rounded-lg ${isOwn ? 'bg-primary/90 text-white' : 'bg-surface border border-border text-foreground'} hover:opacity-95 transition-colors max-w-sm mt-1`}
@@ -1796,7 +1806,6 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
                                     <p className="text-sm font-medium truncate">{msg.attachment_name || 'Attachment'}</p>
                                     <p className="text-xs text-muted">{msg.attachment_size ? formatFileSize(msg.attachment_size) : 'Link'}</p>
                                   </div>
-                                  <Download className={`w-4 h-4 ${isOwn ? 'text-white/80' : 'text-muted'} shrink-0`} />
                                 </a>
                               )}
                             </div>
@@ -1981,7 +1990,6 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
                 onKeyDown={handleInputKeyDown}
                 onPaste={handlePaste}
                 placeholder={`Message #${channel.name}`}
-                maxLength={1000}
                 className="chat-input-field"
               />
 

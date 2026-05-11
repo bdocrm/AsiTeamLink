@@ -16,6 +16,7 @@ import {
   PanelLeft,
   MessageSquare,
   Bell,
+  Eye,
 } from 'lucide-react';
 import type { Channel, Campaign } from '@/lib/types';
 import { useRouter } from 'next/navigation';
@@ -358,6 +359,16 @@ export function Sidebar({ selectedChannel, onSelectChannel, collapsed, onToggleC
             >
               <Shield className="w-3.5 h-3.5" />
               Admin
+            </button>
+          )}
+          {user?.role === 'compliance' && (
+            <button
+              onClick={() => router.push('/chat/compliance')}
+              className="flex-1 flex items-center justify-center gap-1.5 py-2 text-xs text-muted hover:text-secondary hover:bg-secondary-light rounded-xl transition-all duration-200 font-medium"
+              title="Compliance Audit"
+            >
+              <Eye className="w-3.5 h-3.5" />
+              Audit
             </button>
           )}
           <button

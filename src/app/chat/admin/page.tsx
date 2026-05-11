@@ -17,6 +17,7 @@ import {
   CheckCircle,
   XCircle,
   Trash2,
+  Lock,
 } from 'lucide-react';
 import type { User, Campaign, UserRole } from '@/lib/types';
 
@@ -78,7 +79,10 @@ export default function AdminPage() {
   const handleRoleChange = async (userId: string, role: UserRole) => {
     try {
       const res = await supabase.from('users').update({ role }).eq('id', userId);
-      if (res.error) console.error('Supabase update error (users.role):', res.error);
+      if (res.error) {
+        console.error('Supabase update error (users.role):', res.error);
+        console.error('Error details:', { message: res.error.message, code: res.error.code, hint: res.error.hint });
+      }
       else console.log('Supabase update success (users.role):', res.data);
     } catch (err) {
       console.error('Unhandled error changing role:', err);
@@ -98,6 +102,28 @@ export default function AdminPage() {
       console.error('Unhandled error assigning campaign:', err);
     }
     fetchUsers();
+  };
+
+  const handleResetPassword = async (userId: string, userEmail: string) => {
+    if (!confirm(`Send password reset email to ${userEmail}?`)) return;
+    try {
+      const response = await fetch('/api/admin/reset-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId, userEmail }),
+      });
+      const result = await response.json();
+      if (!response.ok) {
+        console.error('Reset password error:', result.error);
+        alert('Error: ' + result.error);
+      } else {
+        console.log('Password reset email sent:', result.message);
+        alert('✅ Password reset email sent to ' + userEmail);
+      }
+    } catch (err) {
+      console.error('Unhandled error resetting password:', err);
+      alert('Failed to generate password reset link');
+    }
   };
 
   const handleCreateCampaign = async () => {
@@ -255,6 +281,7 @@ export default function AdminPage() {
                             <option value="agent">Agent</option>
                             <option value="tl">Team Leader</option>
                             <option value="manager">Manager</option>
+                            <option value="compliance">Compliance</option>
                             <option value="admin">Admin</option>
                           </select>
                         )}
@@ -297,6 +324,15 @@ export default function AdminPage() {
                             title="Approve"
                           >
                             <Check className="w-4 h-4" />
+                          </button>
+                        )}
+                        {u.status === 'approved' && (
+                          <button
+                            onClick={() => handleResetPassword(u.id, u.email)}
+                            className="p-1.5 bg-primary/10 text-primary hover:bg-primary/20 rounded-lg transition-colors"
+                            title="Reset Password"
+                          >
+                            <Lock className="w-4 h-4" />
                           </button>
                         )}
                       </td>
