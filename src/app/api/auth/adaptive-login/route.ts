@@ -166,32 +166,34 @@ export async function POST(request: NextRequest) {
             },
           });
 
-          console.log('Transporter created, fetching user profile...');
-          const { data: userProfile, error: userError } = await serviceSupabase
-            .from('users')
-            .select('email, name')
-            .eq('id', userId)
-            .single();
-
-          console.log('User profile fetch:', { userProfile, userError });
-
-          if (userError) {
-            console.error('User profile fetch error:', userError);
-            throw new Error(`Failed to fetch user profile: ${userError.message}`);
+          console.log('Transporter created, using email from request...');
+          
+          // Use email from the login request (already have it)
+          const userEmail = email;
+          console.log(`Sending OTP to ${userEmail}...`);
+          
+          // Get user name if possible (for personalization)
+          let userName = 'User';
+          try {
+            const { data: userProfile } = await serviceSupabase
+              .from('users')
+              .select('name')
+              .eq('id', userId)
+              .single();
+            if (userProfile?.name) {
+              userName = userProfile.name;
+            }
+          } catch (nameErr) {
+            console.warn('Could not fetch user name, will use generic greeting');
           }
 
-          if (!userProfile) {
-            throw new Error('User profile not found');
-          }
-
-          console.log(`Sending OTP to ${userProfile.email}...`);
           const mailResult = await transporter.sendMail({
             from: `${process.env.SMTP_FROM_NAME} <${process.env.SMTP_FROM_EMAIL}>`,
-            to: userProfile.email,
+            to: userEmail,
             subject: 'Verify Your Login - AsiTeamLink',
             html: `
               <h2>New Device Login</h2>
-              <p>Hi ${userProfile.name},</p>
+              <p>Hi ${userName},</p>
               <p>We detected a login from a new device or IP address:</p>
               <p><strong>Device:</strong> ${deviceName}<br/>
               <strong>IP:</strong> ${clientIp}</p>
@@ -328,7 +330,7 @@ export async function POST(request: NextRequest) {
       // Get user by email
       const { data: users } = await serviceSupabase
         .from('users')
-        .select('id, name, email')
+        .select('id')
         .eq('email', email)
         .limit(1);
 
@@ -336,8 +338,7 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: 'User not found' }, { status: 404 });
       }
 
-      const userProfile = users[0];
-      const userId = userProfile.id;
+      const userId = users[0].id;
 
       // Generate new OTP code
       const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
@@ -365,14 +366,30 @@ export async function POST(request: NextRequest) {
           },
         });
 
-        console.log(`[Resend OTP] Sending code to ${userProfile.email}...`);
+        console.log(`[Resend OTP] Sending code to ${email}...`);
+        
+        // Get user name if possible (for personalization)
+        let userName = 'User';
+        try {
+          const { data: userProfile } = await serviceSupabase
+            .from('users')
+            .select('name')
+            .eq('id', userId)
+            .single();
+          if (userProfile?.name) {
+            userName = userProfile.name;
+          }
+        } catch (nameErr) {
+          console.warn('Could not fetch user name for resend');
+        }
+
         const mailResult = await transporter.sendMail({
           from: `${process.env.SMTP_FROM_NAME} <${process.env.SMTP_FROM_EMAIL}>`,
-          to: userProfile.email,
+          to: email,
           subject: 'Verification Code - AsiTeamLink',
           html: `
             <h2>Login Verification Code</h2>
-            <p>Hi ${userProfile.name},</p>
+            <p>Hi ${userName},</p>
             <p>Here's your new verification code:</p>
             <h1 style="font-size: 32px; letter-spacing: 4px; text-align: center; margin: 20px 0;">
               ${otpCode}
