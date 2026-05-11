@@ -78,16 +78,27 @@ export default function AdminPage() {
 
   const handleRoleChange = async (userId: string, role: UserRole) => {
     try {
-      const res = await supabase.from('users').update({ role }).eq('id', userId);
-      if (res.error) {
-        console.error('Supabase update error (users.role):', res.error);
-        console.error('Error details:', { message: res.error.message, code: res.error.code, hint: res.error.hint });
+      const res = await fetch('/api/admin/update-role', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId, role }),
+      });
+
+      const result = await res.json();
+      
+      if (!res.ok) {
+        console.error('Role update error:', result.error);
+        alert('Error updating role: ' + result.error);
+        return;
       }
-      else console.log('Supabase update success (users.role):', res.data);
+
+      console.log('Role updated successfully:', result.data);
+      alert('Role updated successfully');
+      fetchUsers();
     } catch (err) {
       console.error('Unhandled error changing role:', err);
+      alert('Error updating role');
     }
-    fetchUsers();
   };
 
   const handleCampaignAssign = async (userId: string, campaignId: string | null) => {
