@@ -52,22 +52,33 @@ export async function POST(request: NextRequest) {
     }
 
     // Use admin client to update role (bypasses RLS)
-    const adminSupabase = createAdminClient();
-    const { data, error } = await adminSupabase
-      .from('users')
-      .update({ role })
-      .eq('id', userId)
-      .select();
+    try {
+      const adminSupabase = createAdminClient();
+      console.log('Admin client created successfully');
+      
+      const { data, error } = await adminSupabase
+        .from('users')
+        .update({ role })
+        .eq('id', userId)
+        .select();
 
-    if (error) {
-      console.error('Update role error:', error);
+      if (error) {
+        console.error('Supabase update error:', error);
+        return NextResponse.json(
+          { error: `Database error: ${error.message}` },
+          { status: 500 }
+        );
+      }
+
+      console.log('Role updated successfully:', data);
+      return NextResponse.json({ success: true, data });
+    } catch (adminErr: any) {
+      console.error('Admin client error:', adminErr);
       return NextResponse.json(
-        { error: error.message || 'Failed to update role' },
+        { error: `Admin client error: ${adminErr?.message || 'Unknown error'}` },
         { status: 500 }
       );
     }
-
-    return NextResponse.json({ success: true, data });
   } catch (err: any) {
     console.error('Update role exception:', err);
     return NextResponse.json(
