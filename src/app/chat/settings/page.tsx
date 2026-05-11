@@ -14,8 +14,10 @@ import {
   Save,
   CheckCircle,
   Palette,
+  Smartphone,
 } from 'lucide-react';
 import MFASettings from '@/components/settings/MFASettings';
+import SessionsManager from '@/components/settings/SessionsManager';
 import type { ThemePreference } from '@/lib/types';
 
 export default function SettingsPage() {
@@ -165,6 +167,18 @@ export default function SettingsPage() {
         {/* Security section - MFA */}
         <div className="bg-surface border border-border rounded-xl p-6">
           <MFASettings mfaEnabled={user?.mfa_enabled || false} onStatusChange={refreshUser} />
+        </div>
+
+        {/* Security section - Active Sessions */}
+        <div className="bg-surface border border-border rounded-xl p-6">
+          <div className="flex items-center gap-3 mb-4">
+            <Smartphone className="w-5 h-5 text-primary" />
+            <h2 className="font-semibold text-foreground">Active Sessions</h2>
+          </div>
+          <p className="text-sm text-muted mb-4">
+            Manage your login sessions across different devices. You can revoke access from any device at any time.
+          </p>
+          <SessionsManager />
         </div>
       </div>
     </div>
