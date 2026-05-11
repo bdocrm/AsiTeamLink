@@ -96,22 +96,36 @@ export async function GET(request: NextRequest) {
       const userIds = [...new Set(logs.map((l: any) => l.user_id))];
       
       try {
-        const { data: users, error: usersError } = await serviceSupabase
+        // First try to get from users table
+        const { data: users } = await serviceSupabase
           .from('users')
           .select('id, email, name')
           .in('id', userIds);
 
-        if (usersError) {
-          console.warn('Failed to fetch user info:', usersError);
-          // Return logs with default user values if user fetch fails
-          const enrichedLogs = logs.map((log: any) => ({
-            ...log,
-            users: { id: log.user_id, email: 'Unknown', name: 'Unknown' },
-          }));
-          return NextResponse.json({ success: true, logs: enrichedLogs });
-        }
-
         const userMap = new Map(users?.map((u: any) => [u.id, u]) || []);
+
+        // For any missing users, try to get from auth admin API
+        const missingUserIds = userIds.filter(id => !userMap.has(id));
+        
+        if (missingUserIds.length > 0) {
+          try {
+            const { data: authUsers } = await serviceSupabase.auth.admin.listUsers();
+            
+            if (authUsers?.users) {
+              authUsers.users.forEach((u: any) => {
+                if (missingUserIds.includes(u.id) && !userMap.has(u.id)) {
+                  userMap.set(u.id, {
+                    id: u.id,
+                    email: u.email || 'Unknown',
+                    name: u.user_metadata?.name || u.email?.split('@')[0] || 'Unknown',
+                  });
+                }
+              });
+            }
+          } catch (authFetchError) {
+            console.warn('Failed to fetch from auth:', authFetchError);
+          }
+        }
 
         // Enrich logs with user info
         const enrichedLogs = logs.map((log: any) => ({
