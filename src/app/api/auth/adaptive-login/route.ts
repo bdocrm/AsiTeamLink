@@ -247,7 +247,10 @@ export async function POST(request: NextRequest) {
 
     // ============ ACTION: Verify OTP ============
     if (action === 'verify_otp') {
+      console.log('[Verify OTP] Starting verification', { email, otpCode, user_id });
+      
       if (!email || !otpCode || otpCode.length !== 6 || !user_id) {
+        console.log('[Verify OTP] Invalid parameters:', { email: !!email, otpCode: !!otpCode, length: otpCode?.length, user_id: !!user_id });
         return NextResponse.json({ error: 'Invalid request parameters' }, { status: 400 });
       }
 
@@ -256,7 +259,9 @@ export async function POST(request: NextRequest) {
       // Verify OTP code (use Philippine Time for expiration check)
       const philippineNow = getPhilippineTime();
       const currentTimeISO = philippineNow.toISOString();
-      const { data: mfaCodes } = await serviceSupabase
+      console.log('[Verify OTP] Checking code', { userId, otpCode, currentTimeISO });
+      
+      const { data: mfaCodes, error: queryError } = await serviceSupabase
         .from('mfa_codes')
         .select('*')
         .eq('user_id', userId)
@@ -266,7 +271,38 @@ export async function POST(request: NextRequest) {
         .order('created_at', { ascending: false })
         .limit(1);
 
+      console.log('[Verify OTP] Query result:', { 
+        found: mfaCodes?.length ?? 0, 
+        queryError,
+        codes: mfaCodes?.map((c: any) => ({
+          id: c.id,
+          code: c.code,
+          expires_at: c.expires_at,
+          used_at: c.used_at,
+          current_time: currentTimeISO,
+          is_expired: c.expires_at <= currentTimeISO,
+          is_used: !!c.used_at
+        }))
+      });
+
       if (!mfaCodes || mfaCodes.length === 0) {
+        console.log('[Verify OTP] Code not found or expired for user:', userId);
+        
+        // Check what codes exist for debugging
+        const { data: allCodes } = await serviceSupabase
+          .from('mfa_codes')
+          .select('*')
+          .eq('user_id', userId)
+          .order('created_at', { ascending: false })
+          .limit(5);
+        
+        console.log('[Verify OTP] All recent codes for user:', allCodes?.map((c: any) => ({
+          code: c.code,
+          expires_at: c.expires_at,
+          used_at: c.used_at,
+          is_expired: c.expires_at <= currentTimeISO
+        })));
+        
         // Log failed OTP attempt
         await serviceSupabase.from('login_audit').insert({
           user_id: userId,
@@ -280,6 +316,8 @@ export async function POST(request: NextRequest) {
 
         return NextResponse.json({ error: 'Invalid or expired code' }, { status: 400 });
       }
+      
+      console.log('[Verify OTP] Code verified, marking as used');
 
       // Mark code as used
       await serviceSupabase
