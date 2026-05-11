@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/components/AuthProvider';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, Trash2, Eye, Download, LogIn } from 'lucide-react';
+import { ArrowLeft, Trash2, Eye, Download, LogIn, FileText } from 'lucide-react';
 import LoginAuditViewer from '@/components/compliance/LoginAuditViewer';
 import type { Channel } from '@/lib/types';
 
@@ -19,14 +19,29 @@ interface AuditLog {
   created_at: string;
 }
 
+interface AttachmentLog {
+  id: string;
+  message_id: string;
+  channel_name: string;
+  attachment_name: string;
+  attachment_size: number;
+  action_type: string; // 'uploaded' or 'downloaded'
+  uploaded_by: string;
+  uploaded_by_email: string;
+  download_by: string | null;
+  download_by_email: string | null;
+  created_at: string;
+}
+
 export default function ComplianceAuditPage() {
   const { user, loading } = useAuth();
   const router = useRouter();
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
+  const [attachmentLogs, setAttachmentLogs] = useState<AttachmentLog[]>([]);
   const [channels, setChannels] = useState<Channel[]>([]);
   const [selectedChannel, setSelectedChannel] = useState<string>('all');
   const [isLoading, setIsLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'messages' | 'logins'>('messages');
+  const [activeTab, setActiveTab] = useState<'messages' | 'attachments' | 'logins'>('messages');
   const supabase = createClient();
 
   useEffect(() => {
@@ -58,7 +73,7 @@ export default function ComplianceAuditPage() {
           if (chans) setChannels(chans);
         }
 
-        // Fetch audit logs
+        // Fetch deleted message audit logs
         const { data: logs } = await supabase
           .from('audit_logs')
           .select(`
@@ -86,6 +101,40 @@ export default function ComplianceAuditPage() {
             created_at: log.created_at,
           }));
           setAuditLogs(formattedLogs);
+        }
+
+        // Fetch attachment audit logs
+        const { data: attachments } = await supabase
+          .from('attachment_logs')
+          .select(`
+            id,
+            message_id,
+            channel_id,
+            attachment_name,
+            attachment_size,
+            action_type,
+            created_at,
+            users!attachment_logs_user_id(name, email),
+            users!attachment_logs_download_by_user_id(name, email),
+            channels(name)
+          `)
+          .order('created_at', { ascending: false });
+
+        if (attachments) {
+          const formattedAttachments = attachments.map((att: any) => ({
+            id: att.id,
+            message_id: att.message_id,
+            channel_name: att.channels?.name || 'Unknown',
+            attachment_name: att.attachment_name || 'Unknown',
+            attachment_size: att.attachment_size || 0,
+            action_type: att.action_type,
+            uploaded_by: att.users?.name || 'Unknown',
+            uploaded_by_email: att.users?.email || 'Unknown',
+            download_by: att.download_by_user?.name || null,
+            download_by_email: att.download_by_user?.email || null,
+            created_at: att.created_at,
+          }));
+          setAttachmentLogs(formattedAttachments);
         }
       } catch (error) {
         console.error('Error fetching audit logs:', error);
@@ -176,6 +225,19 @@ export default function ComplianceAuditPage() {
             <span className="flex items-center gap-2">
               <Trash2 className="w-4 h-4" />
               Deleted Messages
+            </span>
+          </button>
+          <button
+            onClick={() => setActiveTab('attachments')}
+            className={`px-4 py-3 font-medium text-sm border-b-2 transition-colors ${
+              activeTab === 'attachments'
+                ? 'border-primary text-primary'
+                : 'border-transparent text-muted hover:text-foreground'
+            }`}
+          >
+            <span className="flex items-center gap-2">
+              <FileText className="w-4 h-4" />
+              File Attachments
             </span>
           </button>
           <button
@@ -283,6 +345,93 @@ export default function ComplianceAuditPage() {
                     )}
                   </div>
                 ))}
+              </div>
+            )}
+          </div>
+        </>
+      )}
+
+      {/* Attachments Tab Content */}
+      {activeTab === 'attachments' && (
+        <>
+          {/* Filters */}
+          <div className="px-6 py-4 border-b border-border bg-surface/50">
+            <div className="flex items-center gap-3">
+              <label className="text-sm font-medium text-foreground">Filter by Channel:</label>
+              <select
+                value={selectedChannel}
+                onChange={(e) => setSelectedChannel(e.target.value)}
+                className="px-3 py-2 bg-background border border-border rounded-lg text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+              >
+                <option value="all">All Channels</option>
+                {channels.map(ch => (
+                  <option key={ch.id} value={ch.id}>{ch.name}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {/* Attachments List */}
+          <div className="px-6 py-4">
+            {isLoading ? (
+              <div className="text-center py-8 text-muted">Loading attachment logs...</div>
+            ) : attachmentLogs.filter(att => selectedChannel === 'all' || att.channel_name === channels.find(c => c.id === selectedChannel)?.name).length === 0 ? (
+              <div className="text-center py-12 text-muted">
+                <FileText className="w-12 h-12 mx-auto opacity-20 mb-2" />
+                <p>No file attachments in this channel</p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {attachmentLogs
+                  .filter(att => selectedChannel === 'all' || att.channel_name === channels.find(c => c.id === selectedChannel)?.name)
+                  .map(log => (
+                    <div
+                      key={log.id}
+                      className="p-4 bg-surface border border-border rounded-lg hover:border-primary/50 transition-colors"
+                    >
+                      <div className="flex items-start gap-3 mb-2">
+                        <div className={`p-2 rounded-lg shrink-0 ${
+                          log.action_type === 'uploaded' 
+                            ? 'bg-success/10 text-success' 
+                            : 'bg-info/10 text-info'
+                        }`}>
+                          <FileText className="w-4 h-4" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-semibold text-foreground">
+                              {log.action_type === 'uploaded' ? 'File uploaded' : 'File downloaded'}
+                            </span>
+                            <span className="text-xs text-muted bg-background px-2 py-1 rounded">
+                              #{log.channel_name}
+                            </span>
+                          </div>
+                          <div className="text-sm text-muted mt-1">
+                            <span>File: <span className="text-foreground font-medium break-all">{log.attachment_name}</span></span>
+                            <span className="mx-2">•</span>
+                            <span className="text-foreground">{(log.attachment_size / 1024).toFixed(2)} KB</span>
+                          </div>
+                        </div>
+                        <div className="text-xs text-muted shrink-0">
+                          {new Date(log.created_at).toLocaleString()}
+                        </div>
+                      </div>
+
+                      <div className="mt-3 p-3 bg-background rounded-lg border border-border space-y-2">
+                        <div>
+                          <p className="text-xs font-medium text-muted mb-1">
+                            {log.action_type === 'uploaded' ? 'Uploaded by' : 'Downloaded by'}:
+                          </p>
+                          <p className="text-sm text-foreground">
+                            {log.action_type === 'uploaded' 
+                              ? `${log.uploaded_by} (${log.uploaded_by_email})`
+                              : log.download_by ? `${log.download_by} (${log.download_by_email})` : 'Unknown'
+                            }
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
               </div>
             )}
           </div>

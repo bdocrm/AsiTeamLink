@@ -86,7 +86,19 @@ export function ChannelFilesManager({ channel, isOpen, onClose }: ChannelFilesMa
     }
   };
 
-  const handleDeleteFile = async (messageId: string, fileName: string) => {
+  const handleDownload = async (file: FileAttachment) => {
+    try {
+      // Log the download
+      await supabase.rpc('log_attachment_download', {
+        p_message_id: file.message_id,
+        p_attachment_name: file.attachment_name,
+        p_download_by_user_id: user?.id,
+      });
+    } catch (err) {
+      console.warn('Failed to log download:', err);
+      // Don't block download if logging fails
+    }
+  };
     if (!confirm(`Delete "${fileName}"?`)) return;
 
     try {
@@ -217,6 +229,7 @@ export function ChannelFilesManager({ channel, isOpen, onClose }: ChannelFilesMa
                     <a
                       href={file.attachment_url}
                       download={file.attachment_name}
+                      onClick={() => handleDownload(file)}
                       className="p-1.5 text-muted hover:text-foreground hover:bg-background rounded-lg transition-colors"
                       title="Download"
                     >

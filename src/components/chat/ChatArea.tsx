@@ -1178,6 +1178,23 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
       return;
     }
 
+    // Log attachment upload if file was attached
+    if (attachmentUrl && attachmentName && fileAttachment) {
+      try {
+        await supabase.rpc('log_attachment_upload', {
+          p_message_id: insertedMsg.id,
+          p_channel_id: channel.id,
+          p_user_id: user.id,
+          p_attachment_name: attachmentName,
+          p_attachment_url: attachmentUrl,
+          p_attachment_size: attachmentSize,
+        });
+      } catch (err) {
+        console.warn('Failed to log attachment upload:', err);
+        // Don't block message sending if logging fails
+      }
+    }
+
     // Create mention rows via RPC. Prefer explicit IDs collected from selection for reliability.
     try {
       if (mentionSelectedIds && mentionSelectedIds.length > 0) {
