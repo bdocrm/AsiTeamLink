@@ -4,7 +4,7 @@ import { LogIn, LogOut, AlertCircle, Download, Loader } from 'lucide-react';
 interface LoginAuditLog {
   id: string;
   user_id: string;
-  users: {
+  users?: {
     id: string;
     email: string;
     name: string;
@@ -96,7 +96,7 @@ export default function LoginAuditViewer() {
   const downloadCSV = () => {
     const headers = ['User Email', 'Device', 'IP Address', 'Attempt Type', 'Success', 'Reason', 'Timestamp'];
     const rows = logs.map((log) => [
-      log.users.email,
+      log.users?.email || 'Unknown',
       log.device_name || 'Unknown',
       log.ip_address || 'Unknown',
       log.attempt_type,
@@ -186,8 +186,8 @@ export default function LoginAuditViewer() {
                 <tr key={log.id} className="hover:bg-surface/50 transition-colors">
                   <td className="px-4 py-2 text-foreground">
                     <div>
-                      <p className="font-medium">{log.users.name}</p>
-                      <p className="text-xs text-muted">{log.users.email}</p>
+                      <p className="font-medium">{log.users?.name || 'Unknown'}</p>
+                      <p className="text-xs text-muted">{log.users?.email || 'N/A'}</p>
                     </div>
                   </td>
                   <td className="px-4 py-2 text-foreground">{log.device_name || 'Unknown'}</td>

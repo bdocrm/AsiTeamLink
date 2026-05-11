@@ -103,8 +103,12 @@ export async function GET(request: NextRequest) {
 
         if (usersError) {
           console.warn('Failed to fetch user info:', usersError);
-          // Return logs without user enrichment if user fetch fails
-          return NextResponse.json({ success: true, logs });
+          // Return logs with default user values if user fetch fails
+          const enrichedLogs = logs.map((log: any) => ({
+            ...log,
+            users: { id: log.user_id, email: 'Unknown', name: 'Unknown' },
+          }));
+          return NextResponse.json({ success: true, logs: enrichedLogs });
         }
 
         const userMap = new Map(users?.map((u: any) => [u.id, u]) || []);
@@ -118,8 +122,12 @@ export async function GET(request: NextRequest) {
         return NextResponse.json({ success: true, logs: enrichedLogs });
       } catch (userFetchError) {
         console.warn('Error enriching user data:', userFetchError);
-        // Return logs without user enrichment if something goes wrong
-        return NextResponse.json({ success: true, logs });
+        // Return logs with default user values if something goes wrong
+        const enrichedLogs = logs.map((log: any) => ({
+          ...log,
+          users: { id: log.user_id, email: 'Unknown', name: 'Unknown' },
+        }));
+        return NextResponse.json({ success: true, logs: enrichedLogs });
       }
     }
 
