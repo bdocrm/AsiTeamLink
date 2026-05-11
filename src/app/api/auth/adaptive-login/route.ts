@@ -173,8 +173,17 @@ export async function POST(request: NextRequest) {
               user: process.env.SMTP_USERNAME,
               pass: process.env.SMTP_PASSWORD,
             },
+            logger: true,
+            debug: true,
           });
 
+          console.log('Transporter created with config:', {
+            host: process.env.SMTP_HOST,
+            port: process.env.SMTP_PORT,
+            secure: process.env.SMTP_SECURE,
+            user: process.env.SMTP_USERNAME,
+            fromEmail: process.env.SMTP_FROM_EMAIL,
+          });
           console.log('Transporter created, using email from request...');
           
           // Use email from the login request (already have it)
@@ -221,6 +230,10 @@ export async function POST(request: NextRequest) {
             message: (emailErr as any).message,
             code: (emailErr as any).code,
             command: (emailErr as any).command,
+            syscall: (emailErr as any).syscall,
+            errno: (emailErr as any).errno,
+            fullError: (emailErr as any).toString(),
+            stack: (emailErr as any).stack,
           });
           // Continue anyway - OTP was created, but log for debugging
         }
