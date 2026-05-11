@@ -1,17 +1,51 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useRouter } from 'next/navigation';
 
 export default function ResetPasswordPage() {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const router = useRouter();
   const supabase = createClient();
+
+  // Process recovery token from URL hash
+  useEffect(() => {
+    const processRecoveryToken = async () => {
+      try {
+        const hash = typeof window !== 'undefined' ? window.location.hash : '';
+        console.log('Hash received:', hash.substring(0, 50) + '...');
+
+        // Check if there's a session already (from recovery token in hash)
+        const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+
+        if (sessionError) {
+          console.error('Session error:', sessionError);
+          setError('Session error: ' + sessionError.message);
+          return;
+        }
+
+        if (session?.user) {
+          console.log('✓ Session established for:', session.user.email);
+          setError(null);
+        } else {
+          console.log('No session found');
+          setError('No valid session. Please click the reset link from your email again.');
+        }
+      } catch (err: any) {
+        console.error('Error processing token:', err);
+        setError('Error: ' + (err?.message || 'Failed to process reset link'));
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    processRecoveryToken();
+  }, [supabase]);
 
   const handleResetPassword = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -45,6 +79,7 @@ export default function ResetPasswordPage() {
 
       if (error) {
         setError('Failed to update password: ' + error.message);
+        setLoading(false);
         return;
       }
 
@@ -56,10 +91,20 @@ export default function ResetPasswordPage() {
       }, 2000);
     } catch (err: any) {
       setError('Error: ' + (err?.message || 'Failed to update password'));
-    } finally {
       setLoading(false);
     }
   };
+
+  if (loading && !error) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <div className="text-center">
+          <div className="w-5 h-5 border-2 border-primary/30 border-t-primary rounded-full animate-spin mx-auto mb-4" />
+          <p className="text-muted">Processing...</p>
+        </div>
+      </div>
+    );
+  }
 
   if (success) {
     return (
