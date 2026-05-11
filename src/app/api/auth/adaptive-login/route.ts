@@ -366,6 +366,26 @@ export async function POST(request: NextRequest) {
         reason: 'otp_verified',
       });
 
+      // Get user email for sign-in
+      const { data: authUsers } = await serviceSupabase.auth.admin.listUsers();
+      const user = authUsers?.users.find(u => u.id === userId);
+      
+      if (user && user.email) {
+        try {
+          // Set session using admin API to establish auth session
+          const { data: sessionData, error: setSessionError } = await serviceSupabase.auth.admin.createSession(userId);
+          
+          if (setSessionError) {
+            console.error('Create session error:', setSessionError);
+          } else if (sessionData?.session) {
+            console.log('[Verify OTP] Session created successfully');
+            // The cookies should be set automatically by the SSR client
+          }
+        } catch (err) {
+          console.error('Error creating session:', err);
+        }
+      }
+
       return NextResponse.json({
         success: true,
         result: 'login_success',
