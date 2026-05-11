@@ -94,20 +94,33 @@ export async function GET(request: NextRequest) {
     // Get user info for all logs
     if (logs && logs.length > 0) {
       const userIds = [...new Set(logs.map((l: any) => l.user_id))];
-      const { data: users } = await serviceSupabase
-        .from('users')
-        .select('id, email, name')
-        .in('id', userIds);
+      
+      try {
+        const { data: users, error: usersError } = await serviceSupabase
+          .from('users')
+          .select('id, email, name')
+          .in('id', userIds);
 
-      const userMap = new Map(users?.map((u: any) => [u.id, u]) || []);
+        if (usersError) {
+          console.warn('Failed to fetch user info:', usersError);
+          // Return logs without user enrichment if user fetch fails
+          return NextResponse.json({ success: true, logs });
+        }
 
-      // Enrich logs with user info
-      const enrichedLogs = logs.map((log: any) => ({
-        ...log,
-        users: userMap.get(log.user_id) || { id: log.user_id, email: 'Unknown', name: 'Unknown' },
-      }));
+        const userMap = new Map(users?.map((u: any) => [u.id, u]) || []);
 
-      return NextResponse.json({ success: true, logs: enrichedLogs });
+        // Enrich logs with user info
+        const enrichedLogs = logs.map((log: any) => ({
+          ...log,
+          users: userMap.get(log.user_id) || { id: log.user_id, email: 'Unknown', name: 'Unknown' },
+        }));
+
+        return NextResponse.json({ success: true, logs: enrichedLogs });
+      } catch (userFetchError) {
+        console.warn('Error enriching user data:', userFetchError);
+        // Return logs without user enrichment if something goes wrong
+        return NextResponse.json({ success: true, logs });
+      }
     }
 
     return NextResponse.json({ success: true, logs: logs || [] });
