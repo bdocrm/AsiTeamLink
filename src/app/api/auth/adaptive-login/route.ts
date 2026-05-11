@@ -232,28 +232,18 @@ export async function POST(request: NextRequest) {
           result: 'needs_otp',
           message: 'Verification code sent to your email',
           device_info: { device_name: deviceName, ip_address: clientIp },
+          user_id: userId, // Send user_id to frontend for OTP verification
         });
       }
     }
 
     // ============ ACTION: Verify OTP ============
     if (action === 'verify_otp') {
-      if (!email || !body.otp || body.otp.length !== 6) {
-        return NextResponse.json({ error: 'Invalid code format' }, { status: 400 });
+      if (!email || !body.otp || body.otp.length !== 6 || !body.user_id) {
+        return NextResponse.json({ error: 'Invalid request parameters' }, { status: 400 });
       }
 
-      // Get user by email (unauthenticated at this point)
-      const { data: users } = await serviceSupabase
-        .from('users')
-        .select('id')
-        .eq('email', email)
-        .limit(1);
-
-      if (!users || users.length === 0) {
-        return NextResponse.json({ error: 'User not found' }, { status: 404 });
-      }
-
-      const userId = users[0].id;
+      const userId = body.user_id;
 
       // Verify the OTP code
       const { data: mfaCodes } = await serviceSupabase
@@ -323,22 +313,11 @@ export async function POST(request: NextRequest) {
 
     // ============ ACTION: Resend OTP ============
     if (action === 'resend_otp') {
-      if (!email) {
-        return NextResponse.json({ error: 'Email required' }, { status: 400 });
+      if (!email || !body.user_id) {
+        return NextResponse.json({ error: 'Email and user_id required' }, { status: 400 });
       }
 
-      // Get user by email
-      const { data: users } = await serviceSupabase
-        .from('users')
-        .select('id')
-        .eq('email', email)
-        .limit(1);
-
-      if (!users || users.length === 0) {
-        return NextResponse.json({ error: 'User not found' }, { status: 404 });
-      }
-
-      const userId = users[0].id;
+      const userId = body.user_id;
 
       // Generate new OTP code
       const otpCode = Math.floor(100000 + Math.random() * 900000).toString();

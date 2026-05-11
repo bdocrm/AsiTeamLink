@@ -12,6 +12,7 @@ type LoginStep = 'credentials' | 'otp';
 interface DeviceInfo {
   device_name: string;
   ip_address: string;
+  user_id?: string; // Store user_id from check_device
 }
 
 export default function LoginPage() {
@@ -72,7 +73,10 @@ export default function LoginPage() {
 
       // Save device info for display
       if (data.device_info) {
-        setDeviceInfo(data.device_info);
+        setDeviceInfo({
+          ...data.device_info,
+          user_id: data.user_id, // Store user_id from response
+        });
       }
 
       if (data.result === 'login_success') {
@@ -141,6 +145,7 @@ export default function LoginPage() {
           action: 'verify_otp',
           email,
           otp,
+          user_id: deviceInfo?.user_id, // Pass user_id from deviceInfo
         }),
       });
 
@@ -206,6 +211,7 @@ export default function LoginPage() {
         body: JSON.stringify({
           action: 'resend_otp',
           email,
+          user_id: deviceInfo?.user_id, // Pass user_id
         }),
       });
 
