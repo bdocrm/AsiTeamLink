@@ -22,6 +22,8 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { action, email, password, code } = body;
 
+    console.log(`[Adaptive Login] Received action: ${action}, email: ${email}`);
+
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
     const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
     const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -55,6 +57,7 @@ export async function POST(request: NextRequest) {
 
     // ============ ACTION: Check Device Trust ============
     if (action === 'check_device') {
+      console.log(`[Check Device] Starting password verification for ${email}`);
       if (!email || !password) {
         return NextResponse.json({ error: 'Email and password required' }, { status: 400 });
       }
@@ -65,7 +68,7 @@ export async function POST(request: NextRequest) {
         password,
       });
 
-      if (authError || !authData.user) {
+      console.log(`[Check Device] Password auth result:`, { error: authError?.message, hasUser: !!authData?.user });
         // Log failed password attempt
         await serviceSupabase.from('login_audit').insert({
           user_id: null,
