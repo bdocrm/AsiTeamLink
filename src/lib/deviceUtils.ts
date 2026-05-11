@@ -32,7 +32,7 @@ export function parseDeviceName(userAgent: string): string {
  */
 export function createDeviceHash(ipAddress: string, userAgent: string): string {
   const combined = `${ipAddress}:${userAgent}`;
-  return crypto.createHash('sha256').update(combined).hexdigest();
+  return crypto.createHash('sha256').update(combined).digest('hex');
 }
 
 /**
