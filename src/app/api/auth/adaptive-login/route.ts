@@ -65,11 +65,17 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: 'Email and password required' }, { status: 400 });
       }
 
-      // Attempt password authentication
+      // Verify password WITHOUT creating a session (session will be created on frontend after OTP)
       const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
         email,
         password,
       });
+
+      // Important: Don't keep this session on the server - sign out immediately
+      // The frontend will create its own session after OTP verification
+      if (authData.session) {
+        await supabase.auth.signOut();
+      }
 
       console.log(`[Check Device] Password auth result:`, { error: authError?.message, hasUser: !!authData?.user });
 
@@ -366,26 +372,7 @@ export async function POST(request: NextRequest) {
         reason: 'otp_verified',
       });
 
-      // Get user email for sign-in
-      const { data: authUsers } = await serviceSupabase.auth.admin.listUsers();
-      const user = authUsers?.users.find(u => u.id === userId);
-      
-      if (user && user.email) {
-        try {
-          // Set session using admin API to establish auth session
-          const { data: sessionData, error: setSessionError } = await serviceSupabase.auth.admin.createSession(userId);
-          
-          if (setSessionError) {
-            console.error('Create session error:', setSessionError);
-          } else if (sessionData?.session) {
-            console.log('[Verify OTP] Session created successfully');
-            // The cookies should be set automatically by the SSR client
-          }
-        } catch (err) {
-          console.error('Error creating session:', err);
-        }
-      }
-
+      // OTP verified - frontend will now call signInWithPassword to create session
       return NextResponse.json({
         success: true,
         result: 'login_success',
