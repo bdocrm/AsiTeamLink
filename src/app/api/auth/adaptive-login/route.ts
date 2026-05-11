@@ -137,6 +137,7 @@ export async function POST(request: NextRequest) {
         // New device/IP - require OTP
         // Generate 6-digit OTP code
         const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+        console.log(`Generated OTP for user ${userId}: ${otpCode}`);
 
         // Save OTP with 10-minute expiration
         const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
@@ -148,6 +149,12 @@ export async function POST(request: NextRequest) {
 
         // Send OTP email
         try {
+          console.log('Attempting to send OTP email...');
+          console.log(`SMTP_HOST: ${process.env.SMTP_HOST}`);
+          console.log(`SMTP_PORT: ${process.env.SMTP_PORT}`);
+          console.log(`SMTP_SECURE: ${process.env.SMTP_SECURE}`);
+          console.log(`SMTP_FROM_EMAIL: ${process.env.SMTP_FROM_EMAIL}`);
+
           const nodemailer = require('nodemailer');
           const transporter = nodemailer.createTransport({
             host: process.env.SMTP_HOST,
@@ -159,35 +166,52 @@ export async function POST(request: NextRequest) {
             },
           });
 
-          const { data: userProfile } = await serviceSupabase
+          console.log('Transporter created, fetching user profile...');
+          const { data: userProfile, error: userError } = await serviceSupabase
             .from('users')
             .select('email, name')
             .eq('id', userId)
             .single();
 
-          if (userProfile) {
-            await transporter.sendMail({
-              from: `${process.env.SMTP_FROM_NAME} <${process.env.SMTP_FROM_EMAIL}>`,
-              to: userProfile.email,
-              subject: 'Verify Your Login - AsiTeamLink',
-              html: `
-                <h2>New Device Login</h2>
-                <p>Hi ${userProfile.name},</p>
-                <p>We detected a login from a new device or IP address:</p>
-                <p><strong>Device:</strong> ${deviceName}<br/>
-                <strong>IP:</strong> ${clientIp}</p>
-                <p>To complete your login, enter this verification code:</p>
-                <h1 style="font-size: 32px; letter-spacing: 4px; text-align: center; margin: 20px 0;">
-                  ${otpCode}
-                </h1>
-                <p style="color: #666;">This code expires in 10 minutes.</p>
-                <p><strong>If this wasn't you, you can safely ignore this email.</strong></p>
-              `,
-            });
+          console.log('User profile fetch:', { userProfile, userError });
+
+          if (userError) {
+            console.error('User profile fetch error:', userError);
+            throw new Error(`Failed to fetch user profile: ${userError.message}`);
           }
+
+          if (!userProfile) {
+            throw new Error('User profile not found');
+          }
+
+          console.log(`Sending OTP to ${userProfile.email}...`);
+          const mailResult = await transporter.sendMail({
+            from: `${process.env.SMTP_FROM_NAME} <${process.env.SMTP_FROM_EMAIL}>`,
+            to: userProfile.email,
+            subject: 'Verify Your Login - AsiTeamLink',
+            html: `
+              <h2>New Device Login</h2>
+              <p>Hi ${userProfile.name},</p>
+              <p>We detected a login from a new device or IP address:</p>
+              <p><strong>Device:</strong> ${deviceName}<br/>
+              <strong>IP:</strong> ${clientIp}</p>
+              <p>To complete your login, enter this verification code:</p>
+              <h1 style="font-size: 32px; letter-spacing: 4px; text-align: center; margin: 20px 0;">
+                ${otpCode}
+              </h1>
+              <p style="color: #666;">This code expires in 10 minutes.</p>
+              <p><strong>If this wasn't you, you can safely ignore this email.</strong></p>
+            `,
+          });
+          console.log('Email sent successfully:', mailResult);
         } catch (emailErr) {
           console.error('OTP email send error:', emailErr);
-          // Continue anyway - OTP was created
+          console.error('Error details:', {
+            message: (emailErr as any).message,
+            code: (emailErr as any).code,
+            command: (emailErr as any).command,
+          });
+          // Continue anyway - OTP was created, but log for debugging
         }
 
         // Log new device detection
@@ -317,6 +341,7 @@ export async function POST(request: NextRequest) {
 
       // Generate new OTP code
       const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+      console.log(`[Resend OTP] Generated new code for user ${userId}: ${otpCode}`);
 
       // Save OTP with 10-minute expiration
       const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
@@ -328,6 +353,7 @@ export async function POST(request: NextRequest) {
 
       // Send OTP email
       try {
+        console.log('[Resend OTP] Creating transporter...');
         const nodemailer = require('nodemailer');
         const transporter = nodemailer.createTransport({
           host: process.env.SMTP_HOST,
@@ -339,7 +365,8 @@ export async function POST(request: NextRequest) {
           },
         });
 
-        await transporter.sendMail({
+        console.log(`[Resend OTP] Sending code to ${userProfile.email}...`);
+        const mailResult = await transporter.sendMail({
           from: `${process.env.SMTP_FROM_NAME} <${process.env.SMTP_FROM_EMAIL}>`,
           to: userProfile.email,
           subject: 'Verification Code - AsiTeamLink',
@@ -353,9 +380,15 @@ export async function POST(request: NextRequest) {
             <p style="color: #666;">This code expires in 10 minutes.</p>
           `,
         });
+        console.log('[Resend OTP] Email sent:', mailResult);
       } catch (emailErr) {
-        console.error('OTP resend error:', emailErr);
-        return NextResponse.json({ error: 'Failed to send email' }, { status: 500 });
+        console.error('[Resend OTP] Email send error:', emailErr);
+        console.error('Error details:', {
+          message: (emailErr as any).message,
+          code: (emailErr as any).code,
+          command: (emailErr as any).command,
+        });
+        return NextResponse.json({ error: 'Failed to send email: ' + (emailErr as any).message }, { status: 500 });
       }
 
       return NextResponse.json({
