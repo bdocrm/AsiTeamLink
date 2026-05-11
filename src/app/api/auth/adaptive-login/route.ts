@@ -5,6 +5,16 @@ import { cookies } from 'next/headers';
 import { extractClientIp, createDeviceHash, parseDeviceName, isSessionValid } from '@/lib/deviceUtils';
 
 /**
+ * Get current time in Philippine Time (UTC+8)
+ */
+function getPhilippineTime() {
+  const now = new Date();
+  const utc = now.getTime() + now.getTimezoneOffset() * 60000;
+  const philippineTime = new Date(utc + 8 * 60 * 60000);
+  return philippineTime;
+}
+
+/**
  * Adaptive MFA Login Flow
  * POST /api/auth/adaptive-login
  */
@@ -136,8 +146,9 @@ export async function POST(request: NextRequest) {
         const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
         console.log(`Generated OTP for user ${userId}: ${otpCode}`);
 
-        // Save OTP with 10-minute expiration
-        const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+        // Save OTP with 10-minute expiration (Philippine Time)
+        const philippineNow = getPhilippineTime();
+        const expiresAt = new Date(philippineNow.getTime() + 10 * 60 * 1000).toISOString();
         await serviceSupabase.from('mfa_codes').insert({
           user_id: userId,
           code: otpCode,
@@ -242,13 +253,15 @@ export async function POST(request: NextRequest) {
 
       const userId = user_id;
 
-      // Verify the OTP code
+      // Verify OTP code (use Philippine Time for expiration check)
+      const philippineNow = getPhilippineTime();
+      const currentTimeISO = philippineNow.toISOString();
       const { data: mfaCodes } = await serviceSupabase
         .from('mfa_codes')
         .select('*')
         .eq('user_id', userId)
         .eq('code', otpCode)
-        .gt('expires_at', new Date().toISOString())
+        .gt('expires_at', currentTimeISO)
         .is('used_at', null)
         .order('created_at', { ascending: false })
         .limit(1);
@@ -320,8 +333,9 @@ export async function POST(request: NextRequest) {
       const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
       console.log(`[Resend OTP] Generated new code for user ${userId}: ${otpCode}`);
 
-      // Save OTP with 10-minute expiration
-      const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+      // Save OTP with 10-minute expiration (Philippine Time UTC+8)
+      const philippineNow = getPhilippineTime();
+      const expiresAt = new Date(philippineNow.getTime() + 10 * 60 * 1000).toISOString();
       await serviceSupabase.from('mfa_codes').insert({
         user_id: userId,
         code: otpCode,
