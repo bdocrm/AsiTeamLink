@@ -146,9 +146,9 @@ export async function POST(request: NextRequest) {
         const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
         console.log(`Generated OTP for user ${userId}: ${otpCode}`);
 
-        // Save OTP with 10-minute expiration (Philippine Time)
+        // Save OTP with 30-minute expiration (Philippine Time UTC+8)
         const philippineNow = getPhilippineTime();
-        const expiresAt = new Date(philippineNow.getTime() + 10 * 60 * 1000).toISOString();
+        const expiresAt = new Date(philippineNow.getTime() + 30 * 60 * 1000).toISOString();
         await serviceSupabase.from('mfa_codes').insert({
           user_id: userId,
           code: otpCode,
@@ -209,7 +209,7 @@ export async function POST(request: NextRequest) {
               <h1 style="font-size: 32px; letter-spacing: 4px; text-align: center; margin: 20px 0;">
                 ${otpCode}
               </h1>
-              <p style="color: #666;">This code expires in 10 minutes.</p>
+              <p style="color: #666;">This code expires in 30 minutes.</p>
               <p><strong>If this wasn't you, you can safely ignore this email.</strong></p>
             `,
           });
@@ -333,9 +333,9 @@ export async function POST(request: NextRequest) {
       const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
       console.log(`[Resend OTP] Generated new code for user ${userId}: ${otpCode}`);
 
-      // Save OTP with 10-minute expiration (Philippine Time UTC+8)
+      // Save OTP with 30-minute expiration (Philippine Time UTC+8)
       const philippineNow = getPhilippineTime();
-      const expiresAt = new Date(philippineNow.getTime() + 10 * 60 * 1000).toISOString();
+      const expiresAt = new Date(philippineNow.getTime() + 30 * 60 * 1000).toISOString();
       await serviceSupabase.from('mfa_codes').insert({
         user_id: userId,
         code: otpCode,
@@ -384,7 +384,7 @@ export async function POST(request: NextRequest) {
             <h1 style="font-size: 32px; letter-spacing: 4px; text-align: center; margin: 20px 0;">
               ${otpCode}
             </h1>
-            <p style="color: #666;">This code expires in 10 minutes.</p>
+            <p style="color: #666;">This code expires in 30 minutes.</p>
           `,
         });
         console.log('[Resend OTP] Email sent:', mailResult);
