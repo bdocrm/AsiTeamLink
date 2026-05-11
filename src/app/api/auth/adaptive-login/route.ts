@@ -130,7 +130,7 @@ export async function POST(request: NextRequest) {
         // Generate session token or keep auth session
         return NextResponse.json({
           success: true,
-          action: 'login_success',
+          result: 'login_success',
           message: 'Welcome back! Device recognized.',
         });
       } else {
@@ -203,33 +203,40 @@ export async function POST(request: NextRequest) {
 
         return NextResponse.json({
           success: true,
-          action: 'needs_otp',
+          result: 'needs_otp',
           message: 'Verification code sent to your email',
-          device_info: { deviceName, ip: clientIp },
+          device_info: { device_name: deviceName, ip_address: clientIp },
         });
       }
     }
 
     // ============ ACTION: Verify OTP ============
     if (action === 'verify_otp') {
-      const { data: userData } = await supabase.auth.getUser();
-      if (!userData.user) {
-        return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
-      }
-
-      const userId = userData.user.id;
-
-      if (!code || code.length !== 6) {
+      if (!email || !body.otp || body.otp.length !== 6) {
         return NextResponse.json({ error: 'Invalid code format' }, { status: 400 });
       }
+
+      // Get user by email (unauthenticated at this point)
+      const { data: users } = await serviceSupabase
+        .from('users')
+        .select('id')
+        .eq('email', email)
+        .limit(1);
+
+      if (!users || users.length === 0) {
+        return NextResponse.json({ error: 'User not found' }, { status: 404 });
+      }
+
+      const userId = users[0].id;
 
       // Verify the OTP code
       const { data: mfaCodes } = await serviceSupabase
         .from('mfa_codes')
         .select('*')
         .eq('user_id', userId)
-        .eq('code', code)
+        .eq('code', body.otp)
         .gt('expires_at', new Date().toISOString())
+        .is('used_at', null)
         .order('created_at', { ascending: false })
         .limit(1);
 
@@ -283,8 +290,77 @@ export async function POST(request: NextRequest) {
 
       return NextResponse.json({
         success: true,
-        action: 'login_success',
+        result: 'login_success',
         message: 'Device verified. You can now access AsiTeamLink',
+      });
+    }
+
+    // ============ ACTION: Resend OTP ============
+    if (action === 'resend_otp') {
+      if (!email) {
+        return NextResponse.json({ error: 'Email required' }, { status: 400 });
+      }
+
+      // Get user by email
+      const { data: users } = await serviceSupabase
+        .from('users')
+        .select('id, name, email')
+        .eq('email', email)
+        .limit(1);
+
+      if (!users || users.length === 0) {
+        return NextResponse.json({ error: 'User not found' }, { status: 404 });
+      }
+
+      const userProfile = users[0];
+      const userId = userProfile.id;
+
+      // Generate new OTP code
+      const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+
+      // Save OTP with 10-minute expiration
+      const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+      await serviceSupabase.from('mfa_codes').insert({
+        user_id: userId,
+        code: otpCode,
+        expires_at: expiresAt,
+      });
+
+      // Send OTP email
+      try {
+        const nodemailer = require('nodemailer');
+        const transporter = nodemailer.createTransport({
+          host: process.env.SMTP_HOST,
+          port: parseInt(process.env.SMTP_PORT || '587'),
+          secure: process.env.SMTP_SECURE === 'true',
+          auth: {
+            user: process.env.SMTP_USERNAME,
+            pass: process.env.SMTP_PASSWORD,
+          },
+        });
+
+        await transporter.sendMail({
+          from: `${process.env.SMTP_FROM_NAME} <${process.env.SMTP_FROM_EMAIL}>`,
+          to: userProfile.email,
+          subject: 'Verification Code - AsiTeamLink',
+          html: `
+            <h2>Login Verification Code</h2>
+            <p>Hi ${userProfile.name},</p>
+            <p>Here's your new verification code:</p>
+            <h1 style="font-size: 32px; letter-spacing: 4px; text-align: center; margin: 20px 0;">
+              ${otpCode}
+            </h1>
+            <p style="color: #666;">This code expires in 10 minutes.</p>
+          `,
+        });
+      } catch (emailErr) {
+        console.error('OTP resend error:', emailErr);
+        return NextResponse.json({ error: 'Failed to send email' }, { status: 500 });
+      }
+
+      return NextResponse.json({
+        success: true,
+        message: 'Verification code resent to your email',
       });
     }
 
