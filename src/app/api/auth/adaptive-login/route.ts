@@ -25,6 +25,7 @@ export async function POST(request: NextRequest) {
     const { action, email, password, otp: otpCode, user_id } = body;
 
     console.log(`[Adaptive Login] Action: ${action}, Email: ${email}`);
+    console.log(`[Adaptive Login] Request body:`, JSON.stringify(body, null, 2));
 
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
     const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
