@@ -51,7 +51,7 @@ export async function POST(request: NextRequest) {
       type: 'recovery',
       email: userEmail,
       options: {
-        redirectTo: `${appUrl}/auth/callback`,
+        redirectTo: `${appUrl}/api/auth/callback`,
       },
     });
 

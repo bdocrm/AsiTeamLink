@@ -13,26 +13,38 @@ export default function AuthCallbackPage() {
   useEffect(() => {
     const handleAuthCallback = async () => {
       try {
-        // Let Supabase automatically parse the URL fragment and establish session
-        // This handles recovery links, magiclinks, and oauth redirects
-        const { data: { session }, error } = await supabase.auth.getSession();
+        // Get hash from URL - Supabase puts tokens here
+        const hash = typeof window !== 'undefined' ? window.location.hash : '';
+        console.log('URL hash:', hash.substring(0, 50) + '...');
+
+        // Let Supabase process the hash and establish session
+        // This should automatically exchange recovery/magic link tokens
+        const { data: { session }, error: sessionError } = await supabase.auth.getSession();
         
-        if (error) {
-          console.error('Auth error:', error);
-          setError('Authentication error: ' + error.message);
+        if (sessionError) {
+          console.error('Session error:', sessionError);
+          setError('Authentication error: ' + sessionError.message);
           return;
         }
 
-        if (session) {
-          // Session is established, redirect to chat
-          console.log('Session established, redirecting to chat');
-          router.push('/chat');
+        if (session?.user) {
+          console.log('✓ Session established for:', session.user.email);
+          // User is authenticated, redirect to password reset page or chat
+          // For recovery links, they should reset their password
+          router.push('/login?reset=true');
         } else {
-          // No session established yet
-          console.log('No session, waiting or redirecting home');
-          setTimeout(() => {
-            router.push('/');
-          }, 1000);
+          console.log('No session found after callback');
+          // Try one more time after a short delay
+          await new Promise(resolve => setTimeout(resolve, 500));
+          const { data: { session: retrySession } } = await supabase.auth.getSession();
+          
+          if (retrySession?.user) {
+            console.log('✓ Session established on retry');
+            router.push('/login?reset=true');
+          } else {
+            setError('No valid session. Link may have expired.');
+            setTimeout(() => router.push('/login'), 2000);
+          }
         }
       } catch (err: any) {
         console.error('Callback error:', err);
