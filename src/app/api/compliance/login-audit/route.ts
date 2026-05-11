@@ -65,26 +65,10 @@ export async function GET(request: NextRequest) {
 
     const serviceSupabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    // Build query
+    // Build query - simple select without joins
     let query = serviceSupabase
       .from('login_audit')
-      .select(
-        `
-        id,
-        user_id,
-        ip_address,
-        device_name,
-        attempt_type,
-        success,
-        reason,
-        created_at,
-        users (
-          id,
-          email,
-          name
-        )
-      `
-      )
+      .select('*')
       .order('created_at', { ascending: false })
       .limit(limit);
 
@@ -104,12 +88,34 @@ export async function GET(request: NextRequest) {
 
     if (error) {
       console.error('Fetch login audit error:', error);
-      return NextResponse.json({ error: 'Failed to fetch audit logs' }, { status: 500 });
+      return NextResponse.json({ error: 'Failed to fetch audit logs', details: error.message }, { status: 500 });
     }
 
-    return NextResponse.json({ success: true, logs });
+    // Get user info for all logs
+    if (logs && logs.length > 0) {
+      const userIds = [...new Set(logs.map((l: any) => l.user_id))];
+      const { data: users } = await serviceSupabase
+        .from('users')
+        .select('id, email, name')
+        .in('id', userIds);
+
+      const userMap = new Map(users?.map((u: any) => [u.id, u]) || []);
+
+      // Enrich logs with user info
+      const enrichedLogs = logs.map((log: any) => ({
+        ...log,
+        users: userMap.get(log.user_id) || { id: log.user_id, email: 'Unknown', name: 'Unknown' },
+      }));
+
+      return NextResponse.json({ success: true, logs: enrichedLogs });
+    }
+
+    return NextResponse.json({ success: true, logs: logs || [] });
   } catch (error) {
     console.error('Login audit API error:', error);
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    return NextResponse.json(
+      { error: 'Internal server error', details: String(error) },
+      { status: 500 }
+    );
   }
 }

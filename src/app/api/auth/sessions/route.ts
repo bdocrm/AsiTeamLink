@@ -50,13 +50,19 @@ export async function GET(request: NextRequest) {
 
     if (error) {
       console.error('Fetch sessions error:', error);
-      return NextResponse.json({ error: 'Failed to fetch sessions' }, { status: 500 });
+      return NextResponse.json(
+        { error: 'Failed to fetch sessions', details: error.message },
+        { status: 500 }
+      );
     }
 
-    return NextResponse.json({ success: true, sessions });
+    return NextResponse.json({ success: true, sessions: sessions || [] });
   } catch (error) {
     console.error('Sessions API error:', error);
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    return NextResponse.json(
+      { error: 'Internal server error', details: String(error) },
+      { status: 500 }
+    );
   }
 }
 
@@ -99,14 +105,15 @@ export async function POST(request: NextRequest) {
 
     // Verify session belongs to user
     const serviceSupabase = createClient(supabaseUrl, supabaseServiceKey);
-    const { data: session } = await serviceSupabase
+    const { data: session, error: sessionError } = await serviceSupabase
       .from('login_sessions')
       .select('*')
       .eq('id', sessionId)
       .eq('user_id', user.id)
       .single();
 
-    if (!session) {
+    if (sessionError || !session) {
+      console.error('Session lookup error:', sessionError);
       return NextResponse.json({ error: 'Session not found or does not belong to user' }, { status: 404 });
     }
 
@@ -121,12 +128,18 @@ export async function POST(request: NextRequest) {
 
     if (updateError) {
       console.error('Revoke session error:', updateError);
-      return NextResponse.json({ error: 'Failed to revoke session' }, { status: 500 });
+      return NextResponse.json(
+        { error: 'Failed to revoke session', details: updateError.message },
+        { status: 500 }
+      );
     }
 
     return NextResponse.json({ success: true, message: 'Session revoked' });
   } catch (error) {
     console.error('Sessions API error:', error);
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    return NextResponse.json(
+      { error: 'Internal server error', details: String(error) },
+      { status: 500 }
+    );
   }
 }
