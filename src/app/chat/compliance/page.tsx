@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/components/AuthProvider';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, Trash2, Eye } from 'lucide-react';
+import { ArrowLeft, Trash2, Eye, Download } from 'lucide-react';
 import type { Channel } from '@/lib/types';
 
 interface AuditLog {
@@ -99,6 +99,46 @@ export default function ComplianceAuditPage() {
     ? auditLogs 
     : auditLogs.filter(log => log.channel_name === channels.find(c => c.id === selectedChannel)?.name);
 
+  const handleExport = () => {
+    if (filteredLogs.length === 0) {
+      alert('No logs to export');
+      return;
+    }
+
+    // Prepare CSV headers
+    const headers = ['ID', 'Deleted By', 'Affected User', 'Channel', 'Reason', 'Content', 'Timestamp'];
+    
+    // Prepare CSV rows
+    const rows = filteredLogs.map(log => [
+      log.id,
+      log.deleted_by_name,
+      log.affected_user_name,
+      log.channel_name,
+      `"${log.reason.replace(/"/g, '""')}"`, // Escape quotes in reason
+      `"${log.old_content.replace(/"/g, '""')}"`, // Escape quotes in content
+      new Date(log.created_at).toLocaleString(),
+    ]);
+
+    // Combine headers and rows
+    const csvContent = [
+      headers.join(','),
+      ...rows.map(row => row.join(',')),
+    ].join('\n');
+
+    // Create blob and download
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    
+    link.setAttribute('href', url);
+    link.setAttribute('download', `audit-logs-${new Date().toISOString().split('T')[0]}.csv`);
+    link.style.visibility = 'hidden';
+    
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   if (loading || !user || user.role !== 'compliance') {
     return null;
   }
@@ -136,8 +176,19 @@ export default function ComplianceAuditPage() {
               <option key={ch.id} value={ch.id}>{ch.name}</option>
             ))}
           </select>
-          <div className="ml-auto text-sm text-muted">
-            {filteredLogs.length} deleted message{filteredLogs.length !== 1 ? 's' : ''}
+          <div className="ml-auto flex items-center gap-3">
+            <span className="text-sm text-muted">
+              {filteredLogs.length} deleted message{filteredLogs.length !== 1 ? 's' : ''}
+            </span>
+            <button
+              onClick={handleExport}
+              disabled={filteredLogs.length === 0}
+              className="flex items-center gap-2 px-3 py-2 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              title="Export audit logs to CSV"
+            >
+              <Download className="w-4 h-4" />
+              Export
+            </button>
           </div>
         </div>
       </div>
