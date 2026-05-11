@@ -1,11 +1,14 @@
 import { createServerClient } from '@supabase/ssr';
-import { createAdminClient } from '@/lib/supabase/admin';
 import { NextRequest, NextResponse } from 'next/server';
+import { cookies } from 'next/headers';
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const { userId, role } = body;
+
+    console.log('=== Role Update API ===');
+    console.log('Updating user:', userId, 'to role:', role);
 
     if (!userId || !role) {
       return NextResponse.json(
@@ -24,63 +27,68 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Verify requester is admin
-    const serverSupabase = createServerClient(supabaseUrl, supabaseAnonKey, {
+    const cookieStore = await cookies();
+
+    // Create Supabase client with the authenticated user's session
+    const supabase = createServerClient(supabaseUrl, supabaseAnonKey, {
       cookies: {
-        getAll() {
-          return request.cookies.getAll();
+        get(name: string) {
+          return cookieStore.get(name)?.value;
         },
-        setAll() {
-          /* noop */
+        set(name: string, value: string, options: any) {
+          cookieStore.set(name, value, options);
+        },
+        remove(name: string, options: any) {
+          cookieStore.delete(name);
         },
       },
     });
 
-    const { data: { user } } = await serverSupabase.auth.getUser();
+    // Verify requester is admin
+    const { data: { user } } = await supabase.auth.getUser();
     if (!user) {
+      console.log('Not authenticated');
       return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
     }
 
-    const { data: profile } = await serverSupabase
+    console.log('User authenticated:', user.id);
+
+    const { data: profile, error: profileError } = await supabase
       .from('users')
       .select('role')
       .eq('id', user.id)
       .single();
 
-    if (!profile || profile.role !== 'admin') {
-      return NextResponse.json({ error: 'Admin required' }, { status: 403 });
+    if (profileError) {
+      console.error('Profile fetch error:', profileError);
     }
 
-    // Use admin client to update role (bypasses RLS)
-    try {
-      const adminSupabase = createAdminClient();
-      console.log('Admin client created successfully');
-      
-      const { data, error } = await adminSupabase
-        .from('users')
-        .update({ role })
-        .eq('id', userId)
-        .select();
+    console.log('User role:', profile?.role);
 
-      if (error) {
-        console.error('Supabase update error:', error);
-        return NextResponse.json(
-          { error: `Database error: ${error.message}` },
-          { status: 500 }
-        );
-      }
+    if (!profile || profile.role !== 'admin') {
+      return NextResponse.json({ error: 'Admin access required' }, { status: 403 });
+    }
 
-      console.log('Role updated successfully:', data);
-      return NextResponse.json({ success: true, data });
-    } catch (adminErr: any) {
-      console.error('Admin client error:', adminErr);
+    // Update the user's role using the authenticated admin session
+    console.log('Performing update with admin session...');
+    const { data, error } = await supabase
+      .from('users')
+      .update({ role })
+      .eq('id', userId)
+      .select();
+
+    if (error) {
+      console.error('Update error:', error);
       return NextResponse.json(
-        { error: `Admin client error: ${adminErr?.message || 'Unknown error'}` },
+        { error: `Update failed: ${error.message}` },
         { status: 500 }
       );
     }
+
+    console.log('Update successful:', data);
+    return NextResponse.json({ success: true, data });
   } catch (err: any) {
-    console.error('Update role exception:', err);
+    console.error('Endpoint error:', err);
     return NextResponse.json(
       { error: err?.message || 'Server error' },
       { status: 500 }
