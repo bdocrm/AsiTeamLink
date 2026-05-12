@@ -81,5 +81,5 @@ export function getClientIpAddress(request: NextRequest): string {
   }
   const ip = request.headers.get('x-real-ip');
   if (ip) return ip;
-  return request.ip || 'unknown';
+  return 'unknown';
 }
