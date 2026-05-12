@@ -18,19 +18,68 @@ import {
   XCircle,
   Trash2,
   Lock,
+  KeyRound,
 } from 'lucide-react';
 import type { User, Campaign, UserRole } from '@/lib/types';
+
+interface PasswordResetRequest {
+  id: string;
+  user_id: string;
+  status: 'pending' | 'completed' | 'rejected';
+  requested_at: string;
+  resolved_at?: string;
+  user_name?: string;
+  user_email?: string;
+}
 
 export default function AdminPage() {
   const { user } = useAuth();
   const router = useRouter();
   const supabase = createClient();
 
-  const [tab, setTab] = useState<'users' | 'campaigns'>('users');
+  const [tab, setTab] = useState<'users' | 'campaigns' | 'password-reset'>('users');
   const [users, setUsers] = useState<User[]>([]);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+  const [passwordResetRequests, setPasswordResetRequests] = useState<PasswordResetRequest[]>([]);
   const [newCampaignName, setNewCampaignName] = useState('');
   const [filterStatus, setFilterStatus] = useState<'all' | 'pending' | 'approved' | 'rejected'>('pending');
+  
+  // Reset password confirmation modal
+  const [resetPasswordModal, setResetPasswordModal] = useState<{
+    isOpen: boolean;
+    requestId: string;
+    userId: string;
+    userName: string;
+    userEmail: string;
+    isLoading: boolean;
+    message?: string;
+    temporaryPassword?: string;
+  }>({
+    isOpen: false,
+    requestId: '',
+    userId: '',
+    userName: '',
+    userEmail: '',
+    isLoading: false,
+  });
+  
+  // Role change modal state
+  const [roleChangeModal, setRoleChangeModal] = useState<{
+    isOpen: boolean;
+    userId: string;
+    userName: string;
+    currentRole: UserRole;
+    newRole: UserRole;
+    isLoading: boolean;
+    message?: string;
+  }>({
+    isOpen: false,
+    userId: '',
+    userName: '',
+    currentRole: 'agent',
+    newRole: 'agent',
+    isLoading: false,
+  });
 
   useEffect(() => {
     if (user && user.role !== 'admin') {
@@ -41,6 +90,7 @@ export default function AdminPage() {
   useEffect(() => {
     fetchUsers();
     fetchCampaigns();
+    fetchPasswordResetRequests();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -52,6 +102,43 @@ export default function AdminPage() {
   const fetchCampaigns = async () => {
     const { data } = await supabase.rpc('get_all_campaigns');
     if (data) setCampaigns(data);
+  };
+
+  const fetchPasswordResetRequests = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('password_reset_requests')
+        .select('*')
+        .eq('status', 'pending')
+        .order('requested_at', { ascending: false });
+
+      if (error) {
+        console.error('Error fetching password reset requests:', error);
+        return;
+      }
+
+      // Enrich with user information
+      if (data) {
+        const enrichedRequests = await Promise.all(
+          data.map(async (req) => {
+            const { data: userProfile } = await supabase
+              .from('users')
+              .select('name, email')
+              .eq('id', req.user_id)
+              .single();
+
+            return {
+              ...req,
+              user_name: userProfile?.name || 'Unknown',
+              user_email: userProfile?.email || 'Unknown',
+            };
+          })
+        );
+        setPasswordResetRequests(enrichedRequests);
+      }
+    } catch (err) {
+      console.error('Unhandled error fetching password reset requests:', err);
+    }
   };
 
   const handleApprove = async (userId: string) => {
@@ -77,27 +164,51 @@ export default function AdminPage() {
   };
 
   const handleRoleChange = async (userId: string, role: UserRole) => {
+    const selectedUser = users.find(u => u.id === userId);
+    if (!selectedUser) return;
+    
+    setRoleChangeModal({
+      isOpen: true,
+      userId,
+      userName: selectedUser.name,
+      currentRole: selectedUser.role,
+      newRole: role,
+      isLoading: false,
+    });
+  };
+
+  const confirmRoleChange = async () => {
+    setRoleChangeModal(prev => ({ ...prev, isLoading: true }));
     try {
       const res = await fetch('/api/admin/update-role', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId, role }),
+        body: JSON.stringify({ userId: roleChangeModal.userId, role: roleChangeModal.newRole }),
       });
 
       const result = await res.json();
       
       if (!res.ok) {
         console.error('Role update error:', result.error);
-        alert('Error updating role: ' + result.error);
+        setRoleChangeModal(prev => ({ ...prev, message: '❌ Error: ' + result.error, isLoading: false }));
         return;
       }
 
       console.log('Role updated successfully:', result.data);
-      alert('Role updated successfully');
-      fetchUsers();
+      setRoleChangeModal(prev => ({ ...prev, message: '✅ Role updated successfully!', isLoading: false }));
+      setTimeout(() => {
+        setRoleChangeModal(prev => ({ ...prev, isOpen: false }));
+        fetchUsers();
+      }, 1500);
     } catch (err) {
       console.error('Unhandled error changing role:', err);
-      alert('Error updating role');
+      setRoleChangeModal(prev => ({ ...prev, message: '❌ Error updating role', isLoading: false }));
+    }
+  };
+
+  const closeRoleChangeModal = () => {
+    if (!roleChangeModal.isLoading) {
+      setRoleChangeModal(prev => ({ ...prev, isOpen: false, message: undefined }));
     }
   };
 
@@ -134,6 +245,69 @@ export default function AdminPage() {
     } catch (err) {
       console.error('Unhandled error resetting password:', err);
       alert('Failed to generate password reset link');
+    }
+  };
+
+  const openResetPasswordModal = (request: PasswordResetRequest) => {
+    setResetPasswordModal({
+      isOpen: true,
+      requestId: request.id,
+      userId: request.user_id,
+      userName: request.user_name || 'Unknown',
+      userEmail: request.user_email || 'Unknown',
+      isLoading: false,
+    });
+  };
+
+  const confirmResetPassword = async () => {
+    setResetPasswordModal(prev => ({ ...prev, isLoading: true }));
+    try {
+      const response = await fetch('/api/admin/reset-password-request', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          requestId: resetPasswordModal.requestId, 
+          userId: resetPasswordModal.userId 
+        }),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        console.error('Reset password error:', result.error);
+        setResetPasswordModal(prev => ({ 
+          ...prev, 
+          message: '❌ Error: ' + result.error,
+          isLoading: false 
+        }));
+        return;
+      }
+
+      console.log('Password reset successful:', result);
+      setResetPasswordModal(prev => ({ 
+        ...prev, 
+        message: `✅ Password reset successfully!\n\nTemporary Password:\n${result.temporaryPassword}\n\nShare this with the user securely.`,
+        temporaryPassword: result.temporaryPassword,
+        isLoading: false 
+      }));
+
+      setTimeout(() => {
+        setResetPasswordModal(prev => ({ ...prev, isOpen: false, message: undefined, temporaryPassword: undefined }));
+        fetchPasswordResetRequests();
+      }, 3000);
+    } catch (err) {
+      console.error('Unhandled error resetting password:', err);
+      setResetPasswordModal(prev => ({ 
+        ...prev, 
+        message: '❌ Error resetting password',
+        isLoading: false 
+      }));
+    }
+  };
+
+  const closeResetPasswordModal = () => {
+    if (!resetPasswordModal.isLoading) {
+      setResetPasswordModal(prev => ({ ...prev, isOpen: false, message: undefined, temporaryPassword: undefined }));
     }
   };
 
@@ -219,6 +393,22 @@ export default function AdminPage() {
           >
             <Building2 className="w-4 h-4" />
             Campaigns
+          </button>
+          <button
+            onClick={() => setTab('password-reset')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+              tab === 'password-reset'
+                ? 'bg-primary text-white'
+                : 'bg-surface text-muted hover:text-foreground hover:bg-surface-hover border border-border'
+            }`}
+          >
+            <KeyRound className="w-4 h-4" />
+            Password Reset
+            {passwordResetRequests.length > 0 && (
+              <span className="bg-warning text-white text-xs px-1.5 py-0.5 rounded-full font-bold">
+                {passwordResetRequests.length}
+              </span>
+            )}
           </button>
         </div>
 
@@ -420,7 +610,217 @@ export default function AdminPage() {
             </div>
           </div>
         )}
+
+        {/* Password Reset Requests Tab */}
+        {tab === 'password-reset' && (
+          <div>
+            <div className="space-y-3">
+              {passwordResetRequests.length > 0 ? (
+                passwordResetRequests.map(request => (
+                  <div
+                    key={request.id}
+                    className="bg-surface border border-border rounded-xl p-4 flex items-center justify-between hover:bg-surface-hover/50 transition-colors"
+                  >
+                    <div className="flex items-center gap-4 flex-1">
+                      <div className="w-10 h-10 rounded-full bg-warning/20 flex items-center justify-center">
+                        <KeyRound className="w-5 h-5 text-warning" />
+                      </div>
+                      <div className="flex-1">
+                        <p className="font-medium text-foreground">{request.user_name}</p>
+                        <p className="text-xs text-muted">{request.user_email}</p>
+                        <p className="text-xs text-muted mt-1">
+                          Requested: {new Date(request.requested_at).toLocaleString()}
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <span className="inline-block px-3 py-1 bg-warning/10 text-warning text-xs font-medium rounded-full">
+                          Pending
+                        </span>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => openResetPasswordModal(request)}
+                      className="ml-4 px-4 py-2 bg-primary hover:bg-primary-hover text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
+                    >
+                      <KeyRound className="w-4 h-4" />
+                      Reset Password
+                    </button>
+                  </div>
+                ))
+              ) : (
+                <div className="text-center py-12 text-muted">
+                  <KeyRound className="w-12 h-12 text-muted/20 mx-auto mb-3" />
+                  <p className="text-sm">No pending password reset requests</p>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </div>
+
+      {/* Role Change Modal */}
+      {roleChangeModal.isOpen && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-surface border border-border rounded-xl shadow-xl max-w-sm w-full animate-in zoom-in-95 duration-200">
+            {/* Header */}
+            <div className="border-b border-border px-6 py-4 flex items-center gap-3">
+              <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
+                <UserCog className="w-5 h-5 text-primary" />
+              </div>
+              <h2 className="text-lg font-semibold text-foreground">Change User Role</h2>
+            </div>
+
+            {/* Content */}
+            <div className="px-6 py-4">
+              {!roleChangeModal.message ? (
+                <>
+                  <div className="mb-4">
+                    <p className="text-sm text-muted mb-1">User</p>
+                    <p className="text-base font-medium text-foreground">{roleChangeModal.userName}</p>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3 mb-6">
+                    <div className="bg-background/50 border border-border rounded-lg p-3">
+                      <p className="text-xs text-muted uppercase tracking-wider font-semibold mb-1">Current Role</p>
+                      <p className="text-sm font-medium text-foreground capitalize">{roleChangeModal.currentRole}</p>
+                    </div>
+                    <div className="bg-primary/10 border border-primary/20 rounded-lg p-3">
+                      <p className="text-xs text-muted uppercase tracking-wider font-semibold mb-1">New Role</p>
+                      <p className="text-sm font-medium text-primary capitalize">{roleChangeModal.newRole}</p>
+                    </div>
+                  </div>
+
+                  <p className="text-sm text-muted mb-6">
+                    Are you sure you want to change <strong>{roleChangeModal.userName}'s</strong> role to <strong className="text-primary capitalize">{roleChangeModal.newRole}</strong>?
+                  </p>
+                </>
+              ) : (
+                <div className="py-6 text-center">
+                  <p className="text-base font-medium text-foreground">{roleChangeModal.message}</p>
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="border-t border-border px-6 py-4 flex gap-2 justify-end">
+              {!roleChangeModal.message && (
+                <>
+                  <button
+                    onClick={closeRoleChangeModal}
+                    disabled={roleChangeModal.isLoading}
+                    className="px-4 py-2 text-foreground bg-surface border border-border rounded-lg text-sm font-medium hover:bg-surface-hover transition-colors disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={confirmRoleChange}
+                    disabled={roleChangeModal.isLoading}
+                    className="px-4 py-2 text-white bg-primary hover:bg-primary-hover rounded-lg text-sm font-medium transition-colors disabled:opacity-50 flex items-center gap-2"
+                  >
+                    {roleChangeModal.isLoading && (
+                      <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    )}
+                    {roleChangeModal.isLoading ? 'Updating...' : 'Confirm'}
+                  </button>
+                </>
+              )}
+              {roleChangeModal.message && (
+                <button
+                  onClick={closeRoleChangeModal}
+                  className="px-4 py-2 text-white bg-primary hover:bg-primary-hover rounded-lg text-sm font-medium transition-colors w-full"
+                >
+                  Close
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Reset Password Modal */}
+      {resetPasswordModal.isOpen && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-surface border border-border rounded-xl shadow-xl max-w-sm w-full animate-in zoom-in-95 duration-200">
+            {/* Header */}
+            <div className="border-b border-border px-6 py-4 flex items-center gap-3">
+              <div className="w-10 h-10 rounded-lg bg-warning/10 flex items-center justify-center">
+                <KeyRound className="w-5 h-5 text-warning" />
+              </div>
+              <h2 className="text-lg font-semibold text-foreground">Reset User Password</h2>
+            </div>
+
+            {/* Content */}
+            <div className="px-6 py-6">
+              {!resetPasswordModal.message ? (
+                <>
+                  <div className="mb-4">
+                    <p className="text-sm text-muted mb-1">User</p>
+                    <p className="text-base font-medium text-foreground">{resetPasswordModal.userName}</p>
+                    <p className="text-xs text-muted">{resetPasswordModal.userEmail}</p>
+                  </div>
+
+                  <div className="bg-warning/10 border border-warning/20 rounded-lg p-3 mb-6">
+                    <p className="text-xs text-muted uppercase tracking-wider font-semibold mb-1">Action</p>
+                    <p className="text-sm font-medium text-warning">Generate & Set Temporary Password</p>
+                  </div>
+
+                  <p className="text-sm text-muted mb-6">
+                    A new temporary password will be generated. You'll need to share it with <strong>{resetPasswordModal.userName}</strong> securely.
+                  </p>
+                </>
+              ) : (
+                <div className="text-center">
+                  <div className="text-4xl mb-4 text-success">✅</div>
+                  <p className="text-sm font-medium text-foreground whitespace-pre-line">
+                    {resetPasswordModal.message}
+                  </p>
+                  {resetPasswordModal.temporaryPassword && (
+                    <div className="mt-4 p-3 bg-success/10 border border-success/20 rounded-lg">
+                      <p className="text-xs text-muted uppercase font-semibold mb-1">Temporary Password</p>
+                      <p className="text-sm font-mono text-success font-bold select-all">
+                        {resetPasswordModal.temporaryPassword}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="border-t border-border px-6 py-4 flex gap-2 justify-end">
+              {!resetPasswordModal.message && (
+                <>
+                  <button
+                    onClick={closeResetPasswordModal}
+                    disabled={resetPasswordModal.isLoading}
+                    className="px-4 py-2 text-foreground bg-surface border border-border rounded-lg text-sm font-medium hover:bg-surface-hover transition-colors disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={confirmResetPassword}
+                    disabled={resetPasswordModal.isLoading}
+                    className="px-4 py-2 text-white bg-warning hover:bg-warning-hover rounded-lg text-sm font-medium transition-colors disabled:opacity-50 flex items-center gap-2"
+                  >
+                    {resetPasswordModal.isLoading && (
+                      <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    )}
+                    {resetPasswordModal.isLoading ? 'Resetting...' : 'Reset Password'}
+                  </button>
+                </>
+              )}
+              {resetPasswordModal.message && (
+                <button
+                  onClick={closeResetPasswordModal}
+                  className="px-4 py-2 text-white bg-primary hover:bg-primary-hover rounded-lg text-sm font-medium transition-colors w-full"
+                >
+                  Close
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -26,6 +26,60 @@ const ALLOWED_TYPES = [
   'audio/mpeg', 'audio/wav', 'audio/ogg',
 ];
 
+// Fallback MIME type mapping by file extension
+// Used when browser reports incorrect MIME type (e.g., application/octet-stream)
+const EXTENSION_TO_MIME: Record<string, string> = {
+  // Images
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.png': 'image/png',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.svg': 'image/svg+xml',
+  // Documents
+  '.pdf': 'application/pdf',
+  '.doc': 'application/msword',
+  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  '.xls': 'application/vnd.ms-excel',
+  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  '.ppt': 'application/vnd.ms-powerpoint',
+  '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  // Text
+  '.txt': 'text/plain',
+  '.csv': 'text/csv',
+  '.md': 'text/plain',
+  // Archives
+  '.zip': 'application/zip',
+  '.rar': 'application/x-rar-compressed',
+  '.7z': 'application/x-7z-compressed',
+  // Video
+  '.mp4': 'video/mp4',
+  '.webm': 'video/webm',
+  // Audio
+  '.mp3': 'audio/mpeg',
+  '.wav': 'audio/wav',
+  '.ogg': 'audio/ogg',
+};
+
+function getMimeType(filename: string, reportedType: string): string {
+  // First try the reported type
+  if (ALLOWED_TYPES.includes(reportedType)) {
+    return reportedType;
+  }
+
+  // If reported type is not allowed, try mapping from file extension
+  const extension = filename.substring(filename.lastIndexOf('.')).toLowerCase();
+  const mappedType = EXTENSION_TO_MIME[extension];
+
+  if (mappedType && ALLOWED_TYPES.includes(mappedType)) {
+    console.log(`Mapped ${filename} (${reportedType}) to MIME type: ${mappedType}`);
+    return mappedType;
+  }
+
+  // If no mapping found, return the reported type (will fail validation if not allowed)
+  return reportedType;
+}
+
 export async function POST(request: NextRequest) {
   // Log environment health for easier debugging (prints SET/MISSING, not secrets)
   logEnvHealth();
@@ -46,9 +100,12 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (!ALLOWED_TYPES.includes(file.type)) {
+    // Get the correct MIME type (with fallback to extension-based mapping)
+    const correctMimeType = getMimeType(file.name, file.type);
+
+    if (!ALLOWED_TYPES.includes(correctMimeType)) {
       return NextResponse.json(
-        { error: `File type "${file.type}" is not allowed.` },
+        { error: `File type "${file.type}" is not allowed. File: ${file.name}` },
         { status: 400 }
       );
     }
@@ -97,7 +154,7 @@ export async function POST(request: NextRequest) {
       const { error: uploadError } = await supabase.storage
         .from(BUCKET_NAME)
         .upload(filePath, buffer, {
-          contentType: file.type,
+          contentType: correctMimeType,
           upsert: false,
         });
 
@@ -119,11 +176,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'No public URL for uploaded file.', detail: JSON.stringify(urlData) }, { status: 500 });
     }
 
+    // Note: File upload logging will be handled by the client-side code after message is sent
+    // The client will call /api/compliance/log-file-operation when needed
+
     return NextResponse.json({
       url: urlData.publicUrl,
       name: file.name,
       size: file.size,
-      type: file.type,
+      type: correctMimeType,
     });
   } catch (error) {
     console.error('Upload handler error:', error);

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
+import { logDeletion, getClientIpAddress } from '@/lib/auditLogger';
 
 export async function POST(request: NextRequest) {
   try {
@@ -103,6 +104,21 @@ export async function POST(request: NextRequest) {
       const errorMsg = typeof deleteErr === 'string' ? deleteErr : deleteErr?.message || String(deleteErr);
       console.error('Message delete error:', errorMsg);
       return NextResponse.json({ error: 'Failed to delete message: ' + errorMsg }, { status: 500 });
+    }
+
+    // Log deletion to audit trail
+    try {
+      await logDeletion(
+        serverSupabase,
+        user.id,
+        'message',
+        messageId,
+        message.text?.substring(0, 100),
+        message.text ? 'Deleted via admin panel' : 'File deleted',
+        true
+      );
+    } catch (logErr) {
+      console.warn('Failed to log deletion:', logErr);
     }
 
     console.log('Message deleted successfully:', messageId);

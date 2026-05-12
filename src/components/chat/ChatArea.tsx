@@ -329,6 +329,23 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
       
       console.log('Message deleted successfully');
       setMessages(prev => prev.filter(m => m.id !== target.id));
+
+      // Log permanent deletion to audit trail
+      try {
+        await fetch('/api/compliance/log-deletion', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            entityType: 'message',
+            entityId: target.id,
+            entityName: target.text?.substring(0, 100) || target.attachment_name || '(attachment)',
+            reason: 'Permanently deleted by admin',
+            permanent: true,
+          }),
+        });
+      } catch (logErr) {
+        console.warn('[AUDIT] Failed to log permanent deletion:', logErr);
+      }
     } catch (e: any) {
       console.error('admin delete failed:', e?.message || String(e), e);
       alert('Failed to delete message: ' + (e?.message || 'Unknown error'));
@@ -370,10 +387,56 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
           return;
         }
         setMessages(prev => prev.map(m => (m.id === updData.id ? updData : m)));
+
+        // Log soft deletion via API
+        try {
+          const logRes = await fetch('/api/compliance/log-deletion', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              entityType: 'message',
+              entityId: target.id,
+              entityName: target.text?.substring(0, 100),
+              reason: 'Soft deleted by user',
+              permanent: false,
+            }),
+          });
+          const logData = await logRes.json();
+          if (!logRes.ok) {
+            console.warn('[AUDIT] Failed to log soft deletion:', logData.error);
+          } else {
+            console.log('[AUDIT] Soft deletion logged:', logData);
+          }
+        } catch (logErr) {
+          console.warn('[AUDIT] Failed to log soft deletion:', logErr);
+        }
         return;
       }
 
       setMessages(prev => prev.map(m => m.id === target.id ? { ...m, text: null, attachment_url: null, attachment_name: null, attachment_size: null, reply_to_id: null, is_deleted: true, deleted_at: new Date().toISOString(), deleted_by: user.id } : m));
+
+      // Log soft deletion via API
+      try {
+        const logRes = await fetch('/api/compliance/log-deletion', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            entityType: 'message',
+            entityId: target.id,
+            entityName: target.text?.substring(0, 100),
+            reason: 'Soft deleted by user',
+            permanent: false,
+          }),
+        });
+        const logData = await logRes.json();
+        if (!logRes.ok) {
+          console.warn('[AUDIT] Failed to log soft deletion:', logData.error);
+        } else {
+          console.log('[AUDIT] Soft deletion logged:', logData);
+        }
+      } catch (logErr) {
+        console.warn('[AUDIT] Failed to log soft deletion:', logErr);
+      }
     } catch (e: any) {
       console.error('Soft delete failed', e);
       alert('Failed to delete message: ' + (e?.message || e));
@@ -1190,7 +1253,31 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
           p_attachment_size: attachmentSize,
         });
       } catch (err) {
-        console.warn('Failed to log attachment upload:', err);
+        console.warn('Failed to log attachment upload via RPC:', err);
+      }
+
+      // Also log to file_audit_logs via API
+      try {
+        const res = await fetch('/api/compliance/log-file-operation', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'upload',
+            fileName: attachmentName,
+            fileSize: attachmentSize || 0,
+            fileType: fileAttachment.type,
+            channelId: channel.id,
+            status: 'success',
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          console.warn('[AUDIT] Failed to log file upload:', data.error);
+        } else {
+          console.log('[AUDIT] File upload logged:', data);
+        }
+      } catch (err) {
+        console.warn('[AUDIT] Failed to log file upload:', err);
         // Don't block message sending if logging fails
       }
     }

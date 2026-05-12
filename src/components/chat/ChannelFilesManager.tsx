@@ -88,17 +88,31 @@ export function ChannelFilesManager({ channel, isOpen, onClose }: ChannelFilesMa
 
   const handleDownload = async (file: FileAttachment) => {
     try {
-      // Log the download
-      await supabase.rpc('log_attachment_download', {
-        p_message_id: file.message_id,
-        p_attachment_name: file.attachment_name,
-        p_download_by_user_id: user?.id,
+      // Log the download via API
+      const res = await fetch('/api/compliance/log-file-operation', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'download',
+          fileName: file.attachment_name,
+          fileSize: file.attachment_size || 0,
+          channelId: channel.id,
+          status: 'success',
+        }),
       });
+      const data = await res.json();
+      if (!res.ok) {
+        console.warn('[AUDIT] Failed to log file download:', data.error);
+      } else {
+        console.log('[AUDIT] File download logged:', data);
+      }
     } catch (err) {
-      console.warn('Failed to log download:', err);
+      console.warn('[AUDIT] Failed to log download:', err);
       // Don't block download if logging fails
     }
   };
+
+  const handleDeleteFile = async (messageId: string, fileName: string) => {
     if (!confirm(`Delete "${fileName}"?`)) return;
 
     try {
@@ -123,6 +137,52 @@ export function ChannelFilesManager({ channel, isOpen, onClose }: ChannelFilesMa
       if (updateErr) {
         setError(updateErr.message);
         return;
+      }
+
+      // Log file deletion via API
+      try {
+        const file = files.find(f => f.message_id === messageId);
+        if (file) {
+          // Log to file_audit_logs
+          const fileRes = await fetch('/api/compliance/log-file-operation', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'delete',
+              fileName: file.attachment_name,
+              fileSize: file.attachment_size || 0,
+              channelId: channel.id,
+              status: 'success',
+            }),
+          });
+          const fileData = await fileRes.json();
+          if (!fileRes.ok) {
+            console.warn('[AUDIT] Failed to log file deletion:', fileData.error);
+          } else {
+            console.log('[AUDIT] File deletion logged:', fileData);
+          }
+
+          // Log to deletion_audit_logs
+          const delRes = await fetch('/api/compliance/log-deletion', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              entityType: 'file',
+              entityId: messageId,
+              entityName: file.attachment_name,
+              reason: 'File deleted from channel',
+              permanent: true,
+            }),
+          });
+          const delData = await delRes.json();
+          if (!delRes.ok) {
+            console.warn('[AUDIT] Failed to log deletion:', delData.error);
+          } else {
+            console.log('[AUDIT] Deletion logged:', delData);
+          }
+        }
+      } catch (logErr) {
+        console.warn('[AUDIT] Failed to log file deletion:', logErr);
       }
 
       // Remove from local state

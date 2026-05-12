@@ -361,9 +361,9 @@ export function Sidebar({ selectedChannel, onSelectChannel, collapsed, onToggleC
               Admin
             </button>
           )}
-          {user?.role === 'compliance' && (
+          {(user?.role === 'compliance' || user?.role === 'admin') && (
             <button
-              onClick={() => router.push('/chat/compliance')}
+              onClick={() => router.push('/compliance')}
               className="flex-1 flex items-center justify-center gap-1.5 py-2 text-xs text-muted hover:text-secondary hover:bg-secondary-light rounded-xl transition-all duration-200 font-medium"
               title="Compliance Audit"
             >
