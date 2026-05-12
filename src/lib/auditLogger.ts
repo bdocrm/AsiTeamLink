@@ -1,4 +1,4 @@
-import { createClient as createServerClient } from '@supabase/ssr';
+import { createServerClient } from '@supabase/ssr';
 import { NextRequest } from 'next/server';
 
 export async function logDeletion(
