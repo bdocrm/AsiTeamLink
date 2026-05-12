@@ -64,9 +64,11 @@ export function ChannelMembersManager({ channel, isOpen, onClose }: ChannelMembe
 
   const fetchAvailableMembers = async () => {
     try {
-      const { data, error: err } = await supabase.rpc('get_campaign_members', {
-        campaign_uuid: channel.campaign_id,
-      });
+      // Get all users, not just campaign members - removed campaign restriction
+      const { data, error: err } = await supabase
+        .from('users')
+        .select('id, name, email, role, campaign_id')
+        .order('name', { ascending: true });
 
       if (err) return;
 

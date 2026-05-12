@@ -46,13 +46,17 @@ export function CreateChannelModal({ isOpen, campaignId, onClose, onChannelCreat
     fetchCampaigns();
   }, [isOpen, user?.role]);
 
-  // Fetch campaign members on modal open or campaign selection change
+  // Fetch all available members when campaign is selected
   useEffect(() => {
-    if (!isOpen || !selectedCampaignId) return;
+    if (!isOpen) return;
 
-    const fetchCampaignMembers = async () => {
+    const fetchAllMembers = async () => {
       try {
-        const { data } = await supabase.rpc('get_campaign_members', { campaign_uuid: selectedCampaignId });
+        // Fetch all users, not restricted by campaign
+        const { data } = await supabase
+          .from('users')
+          .select('id, name, email, role, campaign_id')
+          .order('name', { ascending: true });
         if (data) {
           // Filter out current user
           const others = (data as User[]).filter(m => m.id !== user?.id);
@@ -63,8 +67,8 @@ export function CreateChannelModal({ isOpen, campaignId, onClose, onChannelCreat
       }
     };
 
-    fetchCampaignMembers();
-  }, [isOpen, selectedCampaignId, user?.id]);
+    fetchAllMembers();
+  }, [isOpen, user?.id]);
 
   const handleCreateChannel = async () => {
     if (!channelName.trim()) {
