@@ -23,6 +23,7 @@ export function CreateChannelModal({ isOpen, campaignId, onClose, onChannelCreat
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [searchTerm, setSearchTerm] = useState('');
   const supabase = createClient();
 
   // Fetch campaigns for admins
@@ -190,13 +191,25 @@ export function CreateChannelModal({ isOpen, campaignId, onClose, onChannelCreat
             <label className="block text-sm font-medium text-foreground mb-2">
               Add Members ({selectedMembers.size}/{availableMembers.length})
             </label>
+            <input
+              type="text"
+              placeholder="Search members..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm text-foreground placeholder-muted focus:outline-none focus:ring-2 focus:ring-primary mb-2"
+            />
             <div className="border border-border rounded-lg bg-background max-h-48 overflow-y-auto">
               {availableMembers.length === 0 ? (
                 <div className="p-4 text-center text-muted text-sm">
                   No members available in this campaign
                 </div>
               ) : (
-                availableMembers.map(member => (
+                availableMembers
+                  .filter(member =>
+                    member.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                    member.email.toLowerCase().includes(searchTerm.toLowerCase())
+                  )
+                  .map(member => (
                   <button
                     key={member.id}
                     onClick={() => toggleMember(member.id)}
@@ -242,7 +255,10 @@ export function CreateChannelModal({ isOpen, campaignId, onClose, onChannelCreat
         {/* Footer */}
         <div className="border-t border-border p-4 bg-background/50 flex gap-2 sticky bottom-0">
           <button
-            onClick={onClose}
+            onClick={() => {
+              onClose();
+              setSearchTerm('');
+            }}
             disabled={loading}
             className="flex-1 px-4 py-2 bg-surface border border-border text-foreground rounded-lg hover:bg-surface-hover transition-colors disabled:opacity-50"
           >

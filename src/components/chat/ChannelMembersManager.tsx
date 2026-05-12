@@ -30,6 +30,7 @@ export function ChannelMembersManager({ channel, isOpen, onClose }: ChannelMembe
   const [showAddMembers, setShowAddMembers] = useState(false);
   const [selectedToAdd, setSelectedToAdd] = useState<Set<string>>(new Set());
   const [addingMembers, setAddingMembers] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
   const supabase = createClient();
 
   // Check if current user is owner or admin
@@ -192,7 +193,10 @@ export function ChannelMembersManager({ channel, isOpen, onClose }: ChannelMembe
             <div>
               {!showAddMembers ? (
                 <button
-                  onClick={() => setShowAddMembers(true)}
+                  onClick={() => {
+                    setShowAddMembers(true);
+                    setSearchTerm('');
+                  }}
                   className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-primary hover:bg-primary-hover text-white text-sm rounded-lg font-medium transition-colors"
                 >
                   <Plus className="w-4 h-4" />
@@ -206,8 +210,20 @@ export function ChannelMembersManager({ channel, isOpen, onClose }: ChannelMembe
                     </div>
                   ) : (
                     <>
+                      <input
+                        type="text"
+                        placeholder="Search members..."
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                        className="w-full px-3 py-2 bg-surface-hover border border-border rounded-lg text-sm text-foreground placeholder-muted focus:outline-none focus:ring-2 focus:ring-primary"
+                      />
                       <div className="border border-border rounded-lg overflow-hidden max-h-40 overflow-y-auto">
-                        {availableToAdd.map(member => (
+                        {availableToAdd
+                          .filter(member =>
+                            member.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                            member.email.toLowerCase().includes(searchTerm.toLowerCase())
+                          )
+                          .map(member => (
                           <button
                             key={member.id}
                             onClick={() => {
@@ -251,6 +267,7 @@ export function ChannelMembersManager({ channel, isOpen, onClose }: ChannelMembe
                           onClick={() => {
                             setShowAddMembers(false);
                             setSelectedToAdd(new Set());
+                            setSearchTerm('');
                           }}
                           className="flex-1 py-1.5 bg-surface-hover text-foreground text-xs rounded font-medium transition-colors hover:bg-border"
                         >
