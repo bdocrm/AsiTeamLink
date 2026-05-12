@@ -1877,6 +1877,20 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
                                 <div className="max-w-md">
                                   <a
                                     href={msg.attachment_url}
+                                    onClick={() => {
+                                      // Log image download
+                                      fetch('/api/compliance/log-file-operation', {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({
+                                          action: 'download',
+                                          fileName: msg.attachment_name || 'image',
+                                          fileSize: msg.attachment_size || 0,
+                                          channelId: channel.id,
+                                          status: 'success',
+                                        }),
+                                      }).catch(err => console.warn('[AUDIT] Failed to log image download:', err));
+                                    }}
                                     target="_blank"
                                     rel="noopener noreferrer"
                                   >
@@ -1891,6 +1905,20 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
                               ) : !msg.attachment_name || msg.attachment_name === 'Link' ? (
                                 <a
                                   href={msg.attachment_url}
+                                  onClick={() => {
+                                    // Log link click
+                                    fetch('/api/compliance/log-file-operation', {
+                                      method: 'POST',
+                                      headers: { 'Content-Type': 'application/json' },
+                                      body: JSON.stringify({
+                                        action: 'download',
+                                        fileName: 'link-click',
+                                        fileSize: 0,
+                                        channelId: channel.id,
+                                        status: 'success',
+                                      }),
+                                    }).catch(err => console.warn('[AUDIT] Failed to log link click:', err));
+                                  }}
                                   target="_blank"
                                   rel="noopener noreferrer"
                                   className={`inline-flex items-center px-3 py-2 rounded-lg ${isOwn ? 'text-white/90 hover:text-white' : 'text-primary hover:text-primary-hover'} hover:underline break-all`}
@@ -1901,6 +1929,20 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
                                 <a
                                   href={msg.attachment_url}
                                   download={msg.attachment_name}
+                                  onClick={() => {
+                                    // Log file download
+                                    fetch('/api/compliance/log-file-operation', {
+                                      method: 'POST',
+                                      headers: { 'Content-Type': 'application/json' },
+                                      body: JSON.stringify({
+                                        action: 'download',
+                                        fileName: msg.attachment_name,
+                                        fileSize: msg.attachment_size || 0,
+                                        channelId: channel.id,
+                                        status: 'success',
+                                      }),
+                                    }).catch(err => console.warn('[AUDIT] Failed to log file download:', err));
+                                  }}
                                   target="_blank"
                                   rel="noopener noreferrer"
                                   className={`inline-flex items-center gap-2 px-3 py-2 rounded-lg ${isOwn ? 'bg-primary/90 text-white' : 'bg-surface border border-border text-foreground'} hover:opacity-95 transition-colors max-w-sm mt-1`}
