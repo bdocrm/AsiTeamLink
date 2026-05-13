@@ -1,12 +1,13 @@
 'use client';
 
 import { useState } from 'react';
-import { Shield, Trash2, FileUp } from 'lucide-react';
+import { Shield, Trash2, FileUp, AlertTriangle } from 'lucide-react';
 import LoginAuditViewer from '@/components/compliance/LoginAuditViewer';
 import DeletionAuditViewer from '@/components/compliance/DeletionAuditViewer';
 import FileAuditViewer from '@/components/compliance/FileAuditViewer';
+import SuspiciousActivityViewer from '@/components/compliance/SuspiciousActivityViewer';
 
-type AuditView = 'login' | 'deletion' | 'files';
+type AuditView = 'login' | 'deletion' | 'files' | 'suspicious';
 
 export default function CompliancePage() {
   const [activeView, setActiveView] = useState<AuditView>('login');
@@ -15,6 +16,7 @@ export default function CompliancePage() {
     { id: 'login', label: 'Login Audits', icon: Shield },
     { id: 'deletion', label: 'Deletion Audits', icon: Trash2 },
     { id: 'files', label: 'File Audits', icon: FileUp },
+    { id: 'suspicious', label: 'Suspicious Activity', icon: AlertTriangle },
   ];
 
   return (
@@ -45,6 +47,7 @@ export default function CompliancePage() {
         {activeView === 'login' && <LoginAuditViewer />}
         {activeView === 'deletion' && <DeletionAuditViewer />}
         {activeView === 'files' && <FileAuditViewer />}
+        {activeView === 'suspicious' && <SuspiciousActivityViewer />}
       </div>
     </div>
   );

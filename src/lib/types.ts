@@ -17,6 +17,8 @@ export interface User {
   last_online_at?: string | null;
   last_offline_at?: string | null;
   updated_at?: string;
+  aup_accepted_at?: string | null;
+  full_name?: string | null;
 }
 
 export interface Campaign {

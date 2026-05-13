@@ -2,12 +2,14 @@
 
 import { AuthProvider, useAuth } from '@/components/AuthProvider';
 import { useRouter } from 'next/navigation';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import Image from 'next/image';
+import AUPModal from '@/components/AUPModal';
 
 function ChatGuard({ children }: { children: React.ReactNode }) {
-  const { user, loading } = useAuth();
+  const { user, loading, refreshUser } = useAuth();
   const router = useRouter();
+  const [aupDismissed, setAupDismissed] = useState(false);
 
   useEffect(() => {
     if (!loading && !user) {
@@ -47,7 +49,26 @@ function ChatGuard({ children }: { children: React.ReactNode }) {
 
   if (!user || user.status !== 'approved') return null;
 
-  return <>{children}</>;
+  // Show AUP only after the column exists (null = exists but not accepted, undefined = column not yet in DB)
+  const needsAUP = !aupDismissed && user.aup_accepted_at === null;
+
+  const handleAUPAccept = async () => {
+    await fetch('/api/auth/accept-aup', { method: 'POST' });
+    await refreshUser();
+    setAupDismissed(true);
+  };
+
+  return (
+    <>
+      {needsAUP && (
+        <AUPModal
+          userName={user.full_name ?? user.name ?? user.email}
+          onAccept={handleAUPAccept}
+        />
+      )}
+      {children}
+    </>
+  );
 }
 
 export default function ChatShell({ children }: { children: React.ReactNode }) {
