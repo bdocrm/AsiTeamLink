@@ -14,9 +14,15 @@ export async function POST(request: NextRequest) {
     const cookieStore = await cookies();
     const supabase = createServerClient(supabaseUrl, supabaseAnonKey, {
       cookies: {
-        get: (name) => cookieStore.get(name)?.value,
-        set: (name, value, options) => cookieStore.set(name, value, options),
-        remove: (name) => cookieStore.delete(name),
+        get(name: string) {
+          return cookieStore.get(name)?.value;
+        },
+        set(name: string, value: string, options: any) {
+          cookieStore.set(name, value, options);
+        },
+        remove(name: string, options: any) {
+          cookieStore.delete(name);
+        },
       },
     });
 
@@ -25,13 +31,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
     }
 
+    // Update own row — allowed by RLS policy "Users can update own profile"
     const { error } = await supabase
       .from('users')
       .update({ aup_accepted_at: new Date().toISOString() })
       .eq('id', user.id);
 
     if (error) {
-      console.error('[AUP] Failed to save acceptance:', error);
+      console.error('[AUP] Failed to save acceptance:', error.message);
       return NextResponse.json({ error: 'Failed to save acceptance' }, { status: 500 });
     }
 
