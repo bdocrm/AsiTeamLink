@@ -6,6 +6,16 @@ import { useAuth } from '@/components/AuthProvider';
 import { Eye, Clock } from 'lucide-react';
 import type { Channel, User } from '@/lib/types';
 
+function detectPlatformFromUA(ua: string) {
+  const u = ua.toLowerCase();
+  if (/android/.test(u)) return 'Android';
+  if (/iphone|ipad|ipod/.test(u)) return 'iOS';
+  if (/windows/.test(u)) return 'Windows';
+  if (/mac os|macintosh/.test(u)) return 'Mac';
+  if (/linux/.test(u)) return 'Linux';
+  return 'Unknown';
+}
+
 interface MemberListProps {
   channel: Channel;
 }
@@ -76,8 +86,10 @@ export function MemberList({ channel }: MemberListProps) {
             return {
               ...m,
               is_online: isOnline,
-              last_seen: presenceData?.last_seen || m.last_seen,
-              status_changed_at: presenceData?.status_changed_at,
+                  last_seen: presenceData?.last_seen || m.last_seen,
+                  status_changed_at: presenceData?.status_changed_at,
+                  devicePlatform: presenceData?.devicePlatform || (m as any).devicePlatform,
+                  ip: presenceData?.ip || (m as any).ip,
             };
           });
           
@@ -121,11 +133,23 @@ export function MemberList({ channel }: MemberListProps) {
       })
       .subscribe(async (status) => {
         if (status === 'SUBSCRIBED' && currentUser) {
-          await campaignPresence.track({
-            user_id: currentUser.id,
-            online_at: new Date().toISOString(),
-            last_seen: new Date().toISOString(),
-          });
+          try {
+            const ua = typeof navigator !== 'undefined' ? navigator.userAgent : '';
+            const devicePlatform = detectPlatformFromUA(ua);
+            const ipRes = await fetch('/api/client-ip');
+            const ipJson = await ipRes.json();
+            const ip = ipJson?.ip || '';
+
+            await campaignPresence.track({
+              user_id: currentUser.id,
+              online_at: new Date().toISOString(),
+              last_seen: new Date().toISOString(),
+              devicePlatform,
+              ip,
+            });
+          } catch (err) {
+            console.log('Presence track (campaign) error:', err);
+          }
           
           try {
             await supabase
@@ -152,11 +176,23 @@ export function MemberList({ channel }: MemberListProps) {
       })
       .subscribe(async (status) => {
         if (status === 'SUBSCRIBED' && currentUser) {
-          await channelPresence.track({
-            user_id: currentUser.id,
-            user_name: currentUser.name,
-            timestamp: new Date().toISOString(),
-          });
+          try {
+            const ua = typeof navigator !== 'undefined' ? navigator.userAgent : '';
+            const devicePlatform = detectPlatformFromUA(ua);
+            const ipRes = await fetch('/api/client-ip');
+            const ipJson = await ipRes.json();
+            const ip = ipJson?.ip || '';
+
+            await channelPresence.track({
+              user_id: currentUser.id,
+              user_name: currentUser.name,
+              timestamp: new Date().toISOString(),
+              devicePlatform,
+              ip,
+            });
+          } catch (err) {
+            console.log('Presence track (channel) error:', err);
+          }
         }
       });
 
@@ -265,6 +301,13 @@ export function MemberList({ channel }: MemberListProps) {
                         </span>
                       )}
                     </div>
+                    {/* Device / IP info (from presence state) */}
+                    {member && (member as any).devicePlatform && (
+                      <div className="text-[11px] text-muted mt-1 truncate">
+                        <span className="mr-2">{(member as any).devicePlatform}</span>
+                        {((member as any).ip) && <span className="ml-1">· {((member as any).ip)}</span>}
+                      </div>
+                    )}
                   </div>
                 </div>
               );

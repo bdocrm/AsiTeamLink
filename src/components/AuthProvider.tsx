@@ -36,6 +36,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUser(null);
       }
     } catch {
+      // If refresh token is missing/invalid the client may throw repeatedly.
+      // Clear client auth state to avoid repeated 400s and force re-login.
+      try {
+        // best-effort sign out to clear stored tokens
+        await supabase.auth.signOut();
+      } catch (err) {
+        // ignore
+      }
       setUser(null);
     } finally {
       setLoading(false);

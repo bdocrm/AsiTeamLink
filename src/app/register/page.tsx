@@ -31,6 +31,8 @@ export default function RegisterPage() {
       email,
       password,
       options: {
+        // Ensure email links redirect to the deployed app URL (Vercel)
+        emailRedirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/api/auth/callback`,
         data: { name },
       },
     });

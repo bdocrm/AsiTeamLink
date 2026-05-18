@@ -54,6 +54,8 @@ export default function AdminPage() {
     isLoading: boolean;
     message?: string;
     temporaryPassword?: string;
+    manualPassword?: string;
+    manualPasswordConfirm?: string;
   }>({
     isOpen: false,
     requestId: '',
@@ -63,6 +65,18 @@ export default function AdminPage() {
     isLoading: false,
   });
   
+  // Direct set/change password modal (from users table)
+  const [setPasswordModal, setSetPasswordModal] = useState<{
+    isOpen: boolean;
+    userId: string;
+    userName: string;
+    userEmail: string;
+    password?: string;
+    passwordConfirm?: string;
+    isLoading: boolean;
+    message?: string;
+  }>({ isOpen: false, userId: '', userName: '', userEmail: '', isLoading: false });
+
   // Role change modal state
   const [roleChangeModal, setRoleChangeModal] = useState<{
     isOpen: boolean;
@@ -227,25 +241,17 @@ export default function AdminPage() {
   };
 
   const handleResetPassword = async (userId: string, userEmail: string) => {
-    if (!confirm(`Send password reset email to ${userEmail}?`)) return;
-    try {
-      const response = await fetch('/api/admin/reset-password', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId, userEmail }),
-      });
-      const result = await response.json();
-      if (!response.ok) {
-        console.error('Reset password error:', result.error);
-        alert('Error: ' + result.error);
-      } else {
-        console.log('Password reset email sent:', result.message);
-        alert('✅ Password reset email sent to ' + userEmail);
-      }
-    } catch (err) {
-      console.error('Unhandled error resetting password:', err);
-      alert('Failed to generate password reset link');
-    }
+    // Open set-password modal so admin can manually set/change the password
+    const selectedUser = users.find(u => u.id === userId);
+    setSetPasswordModal({
+      isOpen: true,
+      userId,
+      userName: selectedUser?.name || 'Unknown',
+      userEmail: selectedUser?.email || userEmail,
+      password: '',
+      passwordConfirm: '',
+      isLoading: false,
+    });
   };
 
   const openResetPasswordModal = (request: PasswordResetRequest) => {
@@ -260,15 +266,23 @@ export default function AdminPage() {
   };
 
   const confirmResetPassword = async () => {
+    // Basic validation for manual password confirmation
+    if (resetPasswordModal.manualPassword && resetPasswordModal.manualPassword !== resetPasswordModal.manualPasswordConfirm) {
+      setResetPasswordModal(prev => ({ ...prev, message: 'Passwords do not match', isLoading: false }));
+      return;
+    }
+
     setResetPasswordModal(prev => ({ ...prev, isLoading: true }));
     try {
+      const body: any = { requestId: resetPasswordModal.requestId, userId: resetPasswordModal.userId };
+      if (resetPasswordModal.manualPassword && resetPasswordModal.manualPassword.length > 0) {
+        body.manualPassword = resetPasswordModal.manualPassword;
+      }
+
       const response = await fetch('/api/admin/reset-password-request', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          requestId: resetPasswordModal.requestId, 
-          userId: resetPasswordModal.userId 
-        }),
+        body: JSON.stringify(body),
       });
 
       const result = await response.json();
@@ -284,10 +298,11 @@ export default function AdminPage() {
       }
 
       console.log('Password reset successful:', result);
+      const shownPassword = result.temporaryPassword || result.manualPassword || '';
       setResetPasswordModal(prev => ({ 
         ...prev, 
-        message: `✅ Password reset successfully!\n\nTemporary Password:\n${result.temporaryPassword}\n\nShare this with the user securely.`,
-        temporaryPassword: result.temporaryPassword,
+        message: `✅ Password reset successfully!\n\nTemporary Password:\n${shownPassword}\n\nShare this with the user securely.`,
+        temporaryPassword: shownPassword,
         isLoading: false 
       }));
 
@@ -309,6 +324,39 @@ export default function AdminPage() {
     if (!resetPasswordModal.isLoading) {
       setResetPasswordModal(prev => ({ ...prev, isOpen: false, message: undefined, temporaryPassword: undefined }));
     }
+  };
+
+  const openSetPasswordModal = (userId: string, userEmail: string, userName: string) => {
+    setSetPasswordModal({ isOpen: true, userId, userName, userEmail, password: '', passwordConfirm: '', isLoading: false });
+  };
+
+  const confirmSetPassword = async () => {
+    if (!setPasswordModal.password || setPasswordModal.password !== setPasswordModal.passwordConfirm) {
+      setSetPasswordModal(prev => ({ ...prev, message: 'Passwords must match', isLoading: false }));
+      return;
+    }
+    setSetPasswordModal(prev => ({ ...prev, isLoading: true }));
+    try {
+      const res = await fetch('/api/admin/set-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: setPasswordModal.userId, password: setPasswordModal.password }),
+      });
+      const result = await res.json();
+      if (!res.ok) {
+        setSetPasswordModal(prev => ({ ...prev, message: '❌ ' + (result.error || 'Failed'), isLoading: false }));
+        return;
+      }
+      setSetPasswordModal(prev => ({ ...prev, message: '✅ Password updated', isLoading: false }));
+      setTimeout(() => setSetPasswordModal({ isOpen: false, userId: '', userName: '', userEmail: '', isLoading: false }), 1500);
+    } catch (err) {
+      console.error('Unhandled error setting password:', err);
+      setSetPasswordModal(prev => ({ ...prev, message: '❌ Error', isLoading: false }));
+    }
+  };
+
+  const closeSetPasswordModal = () => {
+    if (!setPasswordModal.isLoading) setSetPasswordModal({ isOpen: false, userId: '', userName: '', userEmail: '', isLoading: false });
   };
 
   const handleCreateCampaign = async () => {
@@ -737,6 +785,85 @@ export default function AdminPage() {
         </div>
       )}
 
+      {/* Set/Change Password Modal (direct) */}
+      {setPasswordModal.isOpen && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-surface border border-border rounded-xl shadow-xl max-w-sm w-full animate-in zoom-in-95 duration-200">
+            <div className="border-b border-border px-6 py-4 flex items-center gap-3">
+              <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
+                <KeyRound className="w-5 h-5 text-primary" />
+              </div>
+              <h2 className="text-lg font-semibold text-foreground">Set / Change User Password</h2>
+            </div>
+
+            <div className="px-6 py-6">
+              {!setPasswordModal.message ? (
+                <>
+                  <div className="mb-4">
+                    <p className="text-sm text-muted mb-1">User</p>
+                    <p className="text-base font-medium text-foreground">{setPasswordModal.userName}</p>
+                    <p className="text-xs text-muted">{setPasswordModal.userEmail}</p>
+                  </div>
+
+                  <div className="grid gap-2">
+                    <input
+                      type="password"
+                      placeholder="New password"
+                      value={setPasswordModal.password || ''}
+                      onChange={(e) => setSetPasswordModal(prev => ({ ...prev, password: e.target.value }))}
+                      className="px-3 py-2 bg-surface border border-border rounded-lg text-sm text-foreground placeholder:text-muted focus:outline-none"
+                    />
+                    <input
+                      type="password"
+                      placeholder="Confirm new password"
+                      value={setPasswordModal.passwordConfirm || ''}
+                      onChange={(e) => setSetPasswordModal(prev => ({ ...prev, passwordConfirm: e.target.value }))}
+                      className="px-3 py-2 bg-surface border border-border rounded-lg text-sm text-foreground placeholder:text-muted focus:outline-none"
+                    />
+                  </div>
+                </>
+              ) : (
+                <div className="py-6 text-center">
+                  <p className="text-base font-medium text-foreground">{setPasswordModal.message}</p>
+                </div>
+              )}
+            </div>
+
+            <div className="border-t border-border px-6 py-4 flex gap-2 justify-end">
+              {!setPasswordModal.message && (
+                <>
+                  <button
+                    onClick={closeSetPasswordModal}
+                    disabled={setPasswordModal.isLoading}
+                    className="px-4 py-2 text-foreground bg-surface border border-border rounded-lg text-sm font-medium hover:bg-surface-hover transition-colors disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={confirmSetPassword}
+                    disabled={setPasswordModal.isLoading}
+                    className="px-4 py-2 text-white bg-primary hover:bg-primary-hover rounded-lg text-sm font-medium transition-colors disabled:opacity-50 flex items-center gap-2"
+                  >
+                    {setPasswordModal.isLoading && (
+                      <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    )}
+                    {setPasswordModal.isLoading ? 'Setting...' : 'Set Password'}
+                  </button>
+                </>
+              )}
+              {setPasswordModal.message && (
+                <button
+                  onClick={closeSetPasswordModal}
+                  className="px-4 py-2 text-white bg-primary hover:bg-primary-hover rounded-lg text-sm font-medium transition-colors w-full"
+                >
+                  Close
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Reset Password Modal */}
       {resetPasswordModal.isOpen && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
@@ -759,13 +886,31 @@ export default function AdminPage() {
                     <p className="text-xs text-muted">{resetPasswordModal.userEmail}</p>
                   </div>
 
-                  <div className="bg-warning/10 border border-warning/20 rounded-lg p-3 mb-6">
+                  <div className="bg-warning/10 border border-warning/20 rounded-lg p-3 mb-4">
                     <p className="text-xs text-muted uppercase tracking-wider font-semibold mb-1">Action</p>
                     <p className="text-sm font-medium text-warning">Generate & Set Temporary Password</p>
+                    <p className="text-xs text-muted mt-1">Or enter a password manually to set it yourself.</p>
+                  </div>
+
+                  <div className="grid gap-2 mb-4">
+                    <input
+                      type="password"
+                      placeholder="Manual password (optional)"
+                      value={resetPasswordModal.manualPassword || ''}
+                      onChange={(e) => setResetPasswordModal(prev => ({ ...prev, manualPassword: e.target.value }))}
+                      className="px-3 py-2 bg-surface border border-border rounded-lg text-sm text-foreground placeholder:text-muted focus:outline-none"
+                    />
+                    <input
+                      type="password"
+                      placeholder="Confirm manual password"
+                      value={resetPasswordModal.manualPasswordConfirm || ''}
+                      onChange={(e) => setResetPasswordModal(prev => ({ ...prev, manualPasswordConfirm: e.target.value }))}
+                      className="px-3 py-2 bg-surface border border-border rounded-lg text-sm text-foreground placeholder:text-muted focus:outline-none"
+                    />
                   </div>
 
                   <p className="text-sm text-muted mb-6">
-                    A new temporary password will be generated. You'll need to share it with <strong>{resetPasswordModal.userName}</strong> securely.
+                    A new temporary password will be generated if you leave the fields empty. If you enter a manual password, it will be set for <strong>{resetPasswordModal.userName}</strong>.
                   </p>
                 </>
               ) : (

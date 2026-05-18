@@ -13,7 +13,7 @@ function generateTemporaryPassword(): string {
 }
 
 export async function POST(req: Request) {
-  const { requestId, userId } = await req.json();
+  const { requestId, userId, manualPassword } = await req.json();
 
   if (!requestId || !userId) {
     return Response.json({ error: 'requestId and userId are required' }, { status: 400 });
@@ -70,8 +70,10 @@ export async function POST(req: Request) {
       return Response.json({ error: 'Password reset request not found or already processed' }, { status: 404 });
     }
 
-    // Generate temporary password
-    const tempPassword = generateTemporaryPassword();
+    // Use manual password if provided, otherwise generate temporary password
+    const tempPassword = manualPassword && typeof manualPassword === 'string' && manualPassword.length > 0
+      ? manualPassword
+      : generateTemporaryPassword();
 
     // Use admin client to update the user's password
     const adminSupabase = createAdminClient();
