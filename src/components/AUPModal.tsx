@@ -57,17 +57,17 @@ export default function AUPModal({ userName, onAccept }: AUPModalProps) {
   };
 
   return (
-    <div className="fixed inset-0 z-9999 flex items-center justify-center p-4">
-      {/* Backdrop — no click-to-close */}
-      <div className="modal-backdrop pointer-events-none" />
+    <div className="fixed inset-0 z-60 flex items-center justify-center p-4">
+      {/* Backdrop — semi-transparent, blocks clicks so modal is focusable */}
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
 
       {/* Panel */}
       <div
-        className="modal-panel relative z-10 w-full max-w-lg flex flex-col"
+        className="modal-panel relative z-20 w-full max-w-lg mx-2 sm:mx-0 flex flex-col bg-surface shadow-xl overflow-hidden rounded-t-xl sm:rounded-xl"
         style={{ maxHeight: '90vh' }}
       >
         {/* Header */}
-        <div className="flex items-center gap-3 px-6 pt-6 pb-4 border-b border-border shrink-0">
+        <div className="flex items-center gap-3 px-4 sm:px-6 pt-5 pb-4 border-b border-border shrink-0">
           <div className="flex items-center justify-center w-10 h-10 rounded-xl gradient-brand shrink-0">
             <FileText className="w-5 h-5 text-white" />
           </div>
@@ -91,14 +91,14 @@ export default function AUPModal({ userName, onAccept }: AUPModalProps) {
         </div>
 
         {/* Greeting */}
-        <div className="px-6 pt-4 shrink-0">
+        <div className="px-4 sm:px-6 pt-4 shrink-0">
           <p className="text-sm text-muted">
             Welcome back, <span className="font-semibold text-foreground">{userName}</span>. Before accessing the system, you must acknowledge the following policy.
           </p>
         </div>
 
         {/* Policy items — scrollable */}
-        <div className="flex-1 overflow-y-auto px-6 py-4 space-y-3 min-h-0">
+        <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-4 space-y-3 min-h-0">
           {POLICY_ITEMS.map(({ icon: Icon, title, body }) => (
             <div
               key={title}
@@ -116,7 +116,7 @@ export default function AUPModal({ userName, onAccept }: AUPModalProps) {
         </div>
 
         {/* Footer */}
-        <div className="px-6 pb-6 pt-4 border-t border-border shrink-0 space-y-4">
+        <div className="px-4 sm:px-6 pb-6 pt-4 border-t border-border shrink-0 space-y-4 bg-surface sticky bottom-0">
           {/* Checkbox */}
           <label className="flex items-start gap-3 cursor-pointer group">
             <div className="relative shrink-0 mt-0.5">

@@ -42,6 +42,7 @@ export default function AdminPage() {
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [passwordResetRequests, setPasswordResetRequests] = useState<PasswordResetRequest[]>([]);
   const [newCampaignName, setNewCampaignName] = useState('');
+  const [renameChannelModal, setRenameChannelModal] = useState<{ isOpen: boolean; channelId: string; channelName: string; isLoading: boolean; message?: string }>({ isOpen: false, channelId: '', channelName: '', isLoading: false });
   const [filterStatus, setFilterStatus] = useState<'all' | 'pending' | 'approved' | 'rejected'>('pending');
   
   // Reset password confirmation modal
@@ -107,6 +108,28 @@ export default function AdminPage() {
     fetchPasswordResetRequests();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  
+  const [channelListModal, setChannelListModal] = useState<{ isOpen: boolean; campaignId: string; channels: any[]; isLoading: boolean; message?: string }>({ isOpen: false, campaignId: '', channels: [], isLoading: false });
+
+  const openChannelListModal = async (campaignId: string) => {
+    setChannelListModal({ isOpen: true, campaignId, channels: [], isLoading: true });
+    try {
+      const { data, error } = await supabase.from('channels').select('*').eq('campaign_id', campaignId).order('name');
+      if (error) {
+        console.error('Failed to load channels for campaign:', error);
+        setChannelListModal(prev => ({ ...prev, message: 'Failed to load channels', isLoading: false }));
+        return;
+      }
+      setChannelListModal(prev => ({ ...prev, channels: data || [], isLoading: false }));
+    } catch (err) {
+      console.error('Unhandled error loading channels for campaign:', err);
+      setChannelListModal(prev => ({ ...prev, message: 'Error', isLoading: false }));
+    }
+  };
+
+  const closeChannelListModal = () => {
+    setChannelListModal({ isOpen: false, campaignId: '', channels: [], isLoading: false });
+  };
 
   const fetchUsers = async () => {
     const { data } = await supabase.rpc('get_all_users');
@@ -384,6 +407,44 @@ export default function AdminPage() {
     fetchCampaigns();
   };
 
+  const openRenameChannelModal = (channelId: string, currentName: string) => {
+    setRenameChannelModal({ isOpen: true, channelId, channelName: currentName, isLoading: false });
+  };
+
+  const confirmRenameChannel = async () => {
+    if (!renameChannelModal.channelName.trim()) {
+      setRenameChannelModal(prev => ({ ...prev, message: 'Name cannot be empty' }));
+      return;
+    }
+    setRenameChannelModal(prev => ({ ...prev, isLoading: true }));
+    try {
+      const res = await fetch('/api/admin/rename-channel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ channelId: renameChannelModal.channelId, newName: renameChannelModal.channelName.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        console.error('Rename API error:', data.error);
+        setRenameChannelModal(prev => ({ ...prev, message: 'Failed to rename channel: ' + (data.error || ''), isLoading: false }));
+        return;
+      }
+      setRenameChannelModal(prev => ({ ...prev, message: '✅ Renamed', isLoading: false }));
+      try { window.dispatchEvent(new CustomEvent('channelsUpdated')); } catch {}
+      setTimeout(() => {
+        setRenameChannelModal({ isOpen: false, channelId: '', channelName: '', isLoading: false });
+        fetchCampaigns();
+      }, 800);
+    } catch (err) {
+      console.error('Unhandled error renaming channel:', err);
+      setRenameChannelModal(prev => ({ ...prev, message: 'Error', isLoading: false }));
+    }
+  };
+
+  const closeRenameChannelModal = () => {
+    if (!renameChannelModal.isLoading) setRenameChannelModal({ isOpen: false, channelId: '', channelName: '', isLoading: false });
+  };
+
   const filteredUsers = users.filter(u => {
     if (filterStatus === 'all') return true;
     return u.status === filterStatus;
@@ -640,13 +701,39 @@ export default function AdminPage() {
                         <p className="text-xs text-muted">{memberCount} member{memberCount !== 1 ? 's' : ''}</p>
                       </div>
                     </div>
-                    <button
-                      onClick={() => handleDeleteCampaign(campaign.id)}
-                      className="p-2 text-muted hover:text-danger hover:bg-danger/10 rounded-lg transition-colors"
-                      title="Delete campaign"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => handleDeleteCampaign(campaign.id)}
+                        className="p-2 text-muted hover:text-danger hover:bg-danger/10 rounded-lg transition-colors"
+                        title="Delete campaign"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={async () => {
+                          // fetch channels for campaign and prompt rename
+                          const { data } = await supabase.from('channels').select('*').eq('campaign_id', campaign.id).order('name');
+                          const ch = data && data.length > 0 ? data[0] : null;
+                          if (!ch) {
+                            alert('No channels available in this campaign to rename');
+                            return;
+                          }
+                          // open rename modal for the first channel as a quick action — admin can use Sidebar to rename others
+                          openRenameChannelModal(ch.id, ch.name);
+                        }}
+                        className="p-2 text-muted hover:text-foreground hover:bg-surface-hover rounded-lg transition-colors"
+                        title="Rename a channel (quick)"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
+                      </button>
+                      <button
+                        onClick={() => openChannelListModal(campaign.id)}
+                        className="p-2 text-muted hover:text-foreground hover:bg-surface-hover rounded-lg transition-colors"
+                        title="Manage channels"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
+                      </button>
+                    </div>
                   </div>
                 );
               })}
@@ -859,6 +946,144 @@ export default function AdminPage() {
                   Close
                 </button>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Rename Channel Modal */}
+      {renameChannelModal.isOpen && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-surface border border-border rounded-xl shadow-xl max-w-sm w-full animate-in zoom-in-95 duration-200">
+            <div className="border-b border-border px-6 py-4 flex items-center gap-3">
+              <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
+                <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5 text-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
+              </div>
+              <h2 className="text-lg font-semibold text-foreground">Rename Channel</h2>
+            </div>
+
+            <div className="px-6 py-6">
+              {!renameChannelModal.message ? (
+                <>
+                  <div className="mb-4">
+                    <p className="text-sm text-muted mb-1">Channel</p>
+                    <input
+                      type="text"
+                      value={renameChannelModal.channelName}
+                      onChange={(e) => setRenameChannelModal(prev => ({ ...prev, channelName: e.target.value }))}
+                      className="w-full px-3 py-2 bg-surface border border-border rounded-lg text-sm text-foreground placeholder:text-muted focus:outline-none"
+                    />
+                  </div>
+                </>
+              ) : (
+                <div className="py-6 text-center">
+                  <p className="text-base font-medium text-foreground">{renameChannelModal.message}</p>
+                </div>
+              )}
+            </div>
+
+            <div className="border-t border-border px-6 py-4 flex gap-2 justify-end">
+              {!renameChannelModal.message && (
+                <>
+                  <button
+                    onClick={closeRenameChannelModal}
+                    disabled={renameChannelModal.isLoading}
+                    className="px-4 py-2 text-foreground bg-surface border border-border rounded-lg text-sm font-medium hover:bg-surface-hover transition-colors disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={confirmRenameChannel}
+                    disabled={renameChannelModal.isLoading}
+                    className="px-4 py-2 text-white bg-primary hover:bg-primary-hover rounded-lg text-sm font-medium transition-colors disabled:opacity-50 flex items-center gap-2"
+                  >
+                    {renameChannelModal.isLoading && (
+                      <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    )}
+                    {renameChannelModal.isLoading ? 'Renaming...' : 'Rename'}
+                  </button>
+                </>
+              )}
+              {renameChannelModal.message && (
+                <button
+                  onClick={closeRenameChannelModal}
+                  className="px-4 py-2 text-white bg-primary hover:bg-primary-hover rounded-lg text-sm font-medium transition-colors w-full"
+                >
+                  Close
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Channel List Modal */}
+      {channelListModal.isOpen && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-surface border border-border rounded-xl shadow-xl max-w-lg w-full animate-in zoom-in-95 duration-200">
+            <div className="border-b border-border px-6 py-4 flex items-center gap-3">
+              <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
+                <Building2 className="w-5 h-5 text-primary" />
+              </div>
+              <h2 className="text-lg font-semibold text-foreground">Channels</h2>
+            </div>
+
+            <div className="px-6 py-4">
+              {channelListModal.isLoading && <p className="text-sm text-muted">Loading channels…</p>}
+              {!channelListModal.isLoading && channelListModal.channels.length === 0 && (
+                <p className="text-sm text-muted">No channels found for this campaign.</p>
+              )}
+              {!channelListModal.isLoading && channelListModal.channels.length > 0 && (
+                <div className="space-y-2">
+                  {channelListModal.channels.map(ch => (
+                    <div key={ch.id} className="flex items-center justify-between p-2 border border-border rounded-lg">
+                      <div>
+                        <p className="font-medium text-foreground">{ch.name}</p>
+                        <p className="text-xs text-muted">{ch.id}</p>
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => openRenameChannelModal(ch.id, ch.name)}
+                          className="px-3 py-1 text-sm bg-primary/10 text-primary rounded-md hover:bg-primary/20"
+                        >
+                          Rename
+                        </button>
+                        <button
+                          onClick={async () => {
+                            if (!confirm('Delete channel "' + ch.name + '"? This is permanent.')) return;
+                            try {
+                              const res = await fetch('/api/admin/delete-channel', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ channelId: ch.id, reason: 'Deleted by admin via UI', permanent: true }),
+                              });
+                              const data = await res.json();
+                              if (!res.ok) {
+                                console.error('Delete channel error:', data.error);
+                                alert('Failed to delete channel: ' + (data.error || ''));
+                                return;
+                              }
+                              try { window.dispatchEvent(new CustomEvent('channelsUpdated')); } catch {}
+                              // remove from local list
+                              setChannelListModal(prev => ({ ...prev, channels: prev.channels.filter(c => c.id !== ch.id) }));
+                            } catch (err) {
+                              console.error('Unhandled error deleting channel:', err);
+                              alert('Error deleting channel');
+                            }
+                          }}
+                          className="px-3 py-1 text-sm bg-danger/10 text-danger rounded-md hover:bg-danger/20"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="border-t border-border px-6 py-4 flex gap-2 justify-end">
+              <button onClick={closeChannelListModal} className="px-4 py-2 bg-surface border border-border rounded-lg">Close</button>
             </div>
           </div>
         </div>

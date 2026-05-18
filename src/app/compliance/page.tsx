@@ -6,8 +6,9 @@ import LoginAuditViewer from '@/components/compliance/LoginAuditViewer';
 import DeletionAuditViewer from '@/components/compliance/DeletionAuditViewer';
 import FileAuditViewer from '@/components/compliance/FileAuditViewer';
 import SuspiciousActivityViewer from '@/components/compliance/SuspiciousActivityViewer';
+import ChannelRenameAuditViewer from '@/components/compliance/ChannelRenameAuditViewer';
 
-type AuditView = 'login' | 'deletion' | 'files' | 'suspicious';
+type AuditView = 'login' | 'deletion' | 'files' | 'suspicious' | 'channel_renames';
 
 export default function CompliancePage() {
   const [activeView, setActiveView] = useState<AuditView>('login');
@@ -17,6 +18,7 @@ export default function CompliancePage() {
     { id: 'deletion', label: 'Deletion Audits', icon: Trash2 },
     { id: 'files', label: 'File Audits', icon: FileUp },
     { id: 'suspicious', label: 'Suspicious Activity', icon: AlertTriangle },
+    { id: 'channel_renames', label: 'Channel Renames', icon: Trash2 },
   ];
 
   return (
@@ -48,6 +50,7 @@ export default function CompliancePage() {
         {activeView === 'deletion' && <DeletionAuditViewer />}
         {activeView === 'files' && <FileAuditViewer />}
         {activeView === 'suspicious' && <SuspiciousActivityViewer />}
+        {activeView === 'channel_renames' && <ChannelRenameAuditViewer />}
       </div>
     </div>
   );

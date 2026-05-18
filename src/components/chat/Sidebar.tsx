@@ -47,6 +47,12 @@ export function Sidebar({ selectedChannel, onSelectChannel, collapsed, onToggleC
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
+  useEffect(() => {
+    const handler = () => fetchChannels();
+    window.addEventListener('channelsUpdated', handler as EventListener);
+    return () => window.removeEventListener('channelsUpdated', handler as EventListener);
+  }, []);
+
   // Listen for new messages globally to update unread counts + send browser notifications
   useEffect(() => {
     if (!user) return;

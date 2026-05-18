@@ -13,6 +13,13 @@ export function createAdminClient() {
 
   const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || (pooling && (pooling.startsWith('http://') || pooling.startsWith('https://')) ? pooling : undefined);
   const serviceRole = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  // Log presence of service role key for debugging (never log the key itself)
+  try {
+    // keep this silent in production by relying on NODE_ENV if desired
+    console.log('SUPABASE_SERVICE_ROLE_KEY present:', !!serviceRole);
+  } catch (e) {
+    // no-op
+  }
 
   if (!supabaseUrl || !(supabaseUrl.startsWith('http://') || supabaseUrl.startsWith('https://'))) {
     throw new Error('Invalid or missing Supabase URL. Set SUPABASE_URL to your project URL (https://<project>.supabase.co) in your environment.');
