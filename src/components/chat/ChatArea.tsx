@@ -184,7 +184,7 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
   const QUICK_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🔥', '🎉', '👏'];
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messageRefs = useRef<Record<string, HTMLDivElement | null>>({});
-  const messageInputRef = useRef<HTMLInputElement>(null);
+  const messageInputRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const supabase = createClient();
@@ -1145,8 +1145,8 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
     setFileInputKey(k => k + 1); // Reset input so same file can be re-selected
   };
 
-  const handleSend = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSend = async (e?: React.FormEvent) => {
+    try { if (e && typeof (e as any).preventDefault === 'function') (e as any).preventDefault(); } catch (err) {}
     if ((!text.trim() && !attachment && !fileAttachment) || !channel || !user || sending) return;
 
     setSending(true);
@@ -1444,12 +1444,12 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
     };
   }, [mentionOpen]);
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const val = e.target.value;
     setText(val);
     broadcastTyping();
 
-    const caret = e.target.selectionStart || 0;
+    const caret = (e.target.selectionStart as number) || 0;
     const before = val.slice(0, caret);
     const at = before.lastIndexOf('@');
     if (at !== -1 && (at === 0 || /\s/.test(before.charAt(at - 1)))) {
@@ -1467,28 +1467,55 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
     setMentionOpen(false);
   };
 
-  const handleInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (!mentionOpen) return;
-    const resultsLen = mentionResults.length;
-    if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      setMentionSelectedIndex(i => Math.min(i + 1, resultsLen - 1));
-      return;
-    }
-    if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      setMentionSelectedIndex(i => Math.max(i - 1, 0));
-      return;
-    }
-    if (e.key === 'Enter' || e.key === 'Tab') {
-      if (resultsLen > 0) {
+  const handleInputKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // If mention dropdown is open, handle navigation & selection first
+    if (mentionOpen) {
+      const resultsLen = mentionResults.length;
+      if (e.key === 'ArrowDown') {
         e.preventDefault();
-        selectMention(mentionResults[mentionSelectedIndex] || mentionResults[0]);
+        setMentionSelectedIndex(i => Math.min(i + 1, resultsLen - 1));
+        return;
       }
-      return;
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setMentionSelectedIndex(i => Math.max(i - 1, 0));
+        return;
+      }
+      if (e.key === 'Enter' || e.key === 'Tab') {
+        if (resultsLen > 0) {
+          e.preventDefault();
+          selectMention(mentionResults[mentionSelectedIndex] || mentionResults[0]);
+        }
+        return;
+      }
+      if (e.key === 'Escape') {
+        setMentionOpen(false);
+        return;
+      }
     }
-    if (e.key === 'Escape') {
-      setMentionOpen(false);
+
+    // When mention is not open: Shift+Enter should insert a newline, Enter sends
+    if (e.key === 'Enter') {
+      const el = messageInputRef.current;
+      if (e.shiftKey) {
+        // insert newline at caret
+        e.preventDefault();
+        if (!el) return;
+        const start = (el.selectionStart as number) || 0;
+        const end = (el.selectionEnd as number) || 0;
+        const newText = text.slice(0, start) + '\n' + text.slice(end);
+        setText(newText);
+        // place caret after the newline
+        setTimeout(() => {
+          try { el.selectionStart = el.selectionEnd = start + 1; el.focus(); } catch (err) {}
+        }, 0);
+        return;
+      }
+
+      // Enter without shift: send message
+      e.preventDefault();
+      // Call handleSend without event — make handleSend tolerant of undefined
+      (handleSend as any)();
     }
   };
 
@@ -2128,15 +2155,15 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
               <Paperclip className="w-5 h-5" />
             </button>
             <div className="relative flex-1">
-              <input
+              <textarea
                 ref={messageInputRef}
-                type="text"
                 value={text}
                 onChange={handleInputChange}
                 onKeyDown={handleInputKeyDown}
                 onPaste={handlePaste}
                 placeholder={`Message #${channel.name}`}
-                className="chat-input-field"
+                className="chat-input-field resize-none"
+                rows={2}
               />
 
               {/* Grammar/spell suggestions */}
