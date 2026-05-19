@@ -43,4 +43,27 @@ describe('grammar utils', () => {
     const out = applyAllSuggestionsToText(text, matches);
     expect(out).toBe('An good example');
   });
+
+  it('handles more complex overlapping replacements predictably', () => {
+    const text = 'abcdefg';
+    const matches = [
+      normalizeMatch({ offset: 1, length: 3, replacements: [{ value: 'X' }] }), // replaces 'bcd' -> 'X'
+      normalizeMatch({ offset: 2, length: 2, replacements: [{ value: 'Y' }] }), // replaces 'cd' -> 'Y'
+    ];
+    // Applying descending offsets: first replace at offset 2 -> 'abYefg', then at offset 1 (len 3) -> 'aXfg'
+    const out = applyAllSuggestionsToText(text, matches);
+    expect(out).toBe('aXfg');
+  });
+
+  it('applies suggestion using multi-sentence context when offsets are invalid', () => {
+    const text = 'Hello. I love programing in JS. Bye.';
+    const match = normalizeMatch({
+      offset: 9999,
+      length: 10,
+      context: { text: 'I love programing in JS.', offset: 7, length: 10 },
+      replacements: [{ value: 'programming' }],
+    });
+    const out = applySuggestionToText(text, match, 'programming');
+    expect(out).toBe('Hello. I love programming in JS. Bye.');
+  });
 });
