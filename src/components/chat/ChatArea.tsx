@@ -866,12 +866,37 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
     setShowChecks(false);
     try {
       const json = await checkText(t);
-      let matches = json.matches || [];
+      let matches: any[] = Array.isArray(json?.matches) ? json.matches.slice() : [];
+
+      const term = (mode || '').toLowerCase();
+      const isGrammarMatch = (m: any) => {
+        const issue = String(m?.rule?.issueType || '').toLowerCase();
+        const cat = String(m?.rule?.category?.id || '').toLowerCase();
+        const id = String(m?.rule?.id || '').toLowerCase();
+        return issue.includes('grammar') || cat.includes('grammar') || id.includes('grammar');
+      };
+      const isSpellingMatch = (m: any) => {
+        const issue = String(m?.rule?.issueType || '').toLowerCase();
+        const cat = String(m?.rule?.category?.id || '').toLowerCase();
+        const id = String(m?.rule?.id || '').toLowerCase();
+        // LanguageTool may use MORFOLOGIK or TYPOS for spelling-related rules
+        return issue.includes('misspelling') || cat.includes('typos') || id.includes('morfologik') || id.includes('spelling');
+      };
+
       if (mode === 'grammar') {
-        matches = matches.filter((m: any) => (m.rule && String(m.rule.issueType).toLowerCase().includes('grammar')));
+        matches = matches.filter(isGrammarMatch);
       } else if (mode === 'spelling') {
-        matches = matches.filter((m: any) => (m.rule && String(m.rule.issueType).toLowerCase().includes('misspelling')));
+        matches = matches.filter(isSpellingMatch);
       }
+
+      // Normalize matches for downstream usage
+      matches = matches.map((m: any) => ({
+        ...m,
+        offset: typeof m.offset === 'number' ? m.offset : (m?.context?.offset ?? 0),
+        length: typeof m.length === 'number' ? m.length : (m?.context?.length ?? 0),
+        replacements: Array.isArray(m.replacements) ? m.replacements : (m.replacements ? [m.replacements] : []),
+      }));
+
       setSuggestions(matches || []);
       setShowChecks(true);
       return matches || [];
@@ -889,10 +914,33 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
   const applySuggestion = async (index: number, replacement: string) => {
     const match = suggestions[index];
     if (!match) return;
-    const offset = match.offset || 0;
-    const length = match.length || 0;
-    const before = text.slice(0, offset);
-    const after = text.slice(offset + length);
+    let offset = Number(match.offset ?? match.context?.offset ?? 0);
+    let length = Number(match.length ?? match.context?.length ?? 0);
+    const current = text || '';
+
+    // Guard: if offsets are out of bounds, try to locate the context text
+    if (offset < 0 || offset + length > current.length) {
+      const ctx = String(match?.context?.text || '').trim();
+      if (ctx) {
+        const found = current.indexOf(ctx);
+        if (found >= 0) {
+          offset = found + Number(match?.context?.offset ?? 0);
+          length = Number(match?.context?.length ?? length);
+        } else {
+          // fallback to safe append
+          setText(current + ' ' + replacement);
+          setTimeout(() => handleCheck(), 80);
+          return;
+        }
+      } else {
+        setText(current + ' ' + replacement);
+        setTimeout(() => handleCheck(), 80);
+        return;
+      }
+    }
+
+    const before = current.slice(0, offset);
+    const after = current.slice(offset + length);
     const newText = before + replacement + after;
     setText(newText);
     // re-run check to update suggestions
@@ -904,14 +952,16 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
     // Save previous text for undo
     setLastAppliedText(text);
     // Apply replacements from end to start to preserve offsets
-    const sorted = suggestions.slice().sort((a: any, b: any) => b.offset - a.offset);
-    let newText = text;
+    const sorted = suggestions.slice().sort((a: any, b: any) => (Number(b.offset ?? 0) - Number(a.offset ?? 0)));
+    let newText = text || '';
     let applied = 0;
     for (const m of sorted) {
-      const rep = (m.replacements && m.replacements[0] && (m.replacements[0].value || m.replacements[0])) || null;
+      const repRaw = (m.replacements && m.replacements[0]) || null;
+      const rep = repRaw ? (repRaw.value || repRaw) : null;
       if (!rep) continue;
-      const off = m.offset || 0;
-      const len = m.length || 0;
+      const off = Number(m.offset ?? m.context?.offset ?? 0);
+      const len = Number(m.length ?? m.context?.length ?? 0);
+      if (off < 0 || off > newText.length) continue;
       newText = newText.slice(0, off) + rep + newText.slice(off + len);
       applied += 1;
     }
