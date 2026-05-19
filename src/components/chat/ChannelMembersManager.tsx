@@ -219,10 +219,12 @@ export function ChannelMembersManager({ channel, isOpen, onClose }: ChannelMembe
                       />
                       <div className="border border-border rounded-lg overflow-hidden max-h-40 overflow-y-auto">
                         {availableToAdd
-                          .filter(member =>
-                            member.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                            member.email.toLowerCase().includes(searchTerm.toLowerCase())
-                          )
+                          .filter(member => {
+                            const term = (searchTerm || '').toLowerCase();
+                            const name = (member.name || '').toLowerCase();
+                            const email = (member.email || '').toLowerCase();
+                            return name.includes(term) || email.includes(term);
+                          })
                           .map(member => (
                           <button
                             key={member.id}

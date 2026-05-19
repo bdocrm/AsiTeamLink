@@ -816,7 +816,7 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
     }, 2000);
   };
 
-  const handlePaste = async (e: React.ClipboardEvent<HTMLInputElement>) => {
+  const handlePaste = async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
     setAttachmentError('');
     const items = e.clipboardData?.items;
     if (!items) return;
