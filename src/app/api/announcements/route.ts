@@ -112,9 +112,15 @@ export async function POST(req: Request) {
     }
 
     const adminSupabase = createAdminClient();
+    console.log('Creating announcement with admin client', { campaign_id, title: !!title, body_length: body?.length || 0, image_url: !!image_url, user_id: currentUser.id, role: profile.role });
     const insertRes = await adminSupabase.from('announcements').insert({ campaign_id, title: title || null, body, created_by: currentUser.id, image_url }).select().single();
     if (insertRes.error) {
       console.error('Failed to insert announcement:', insertRes.error);
+      try {
+        console.error('Insert response full debug:', JSON.stringify(insertRes, Object.getOwnPropertyNames(insertRes)));
+      } catch (e) {
+        console.error('Could not stringify insertRes for debug');
+      }
       return NextResponse.json({ error: insertRes.error.message || 'Failed to create announcement' }, { status: 500 });
     }
 
