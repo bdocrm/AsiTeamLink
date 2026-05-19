@@ -1,0 +1,3 @@
+-- Add image_url column to announcements
+ALTER TABLE public.announcements
+ADD COLUMN IF NOT EXISTS image_url text;

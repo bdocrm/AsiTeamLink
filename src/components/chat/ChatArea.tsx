@@ -36,6 +36,8 @@ const ChannelMembersManager = dynamic(() => import('./ChannelMembersManager').th
 const ChannelFilesManager = dynamic(() => import('./ChannelFilesManager').then((m) => m.ChannelFilesManager), { ssr: false });
 import MessageBox from '@/components/ui/MessageBox';
 import { checkText } from '@/lib/languageClient';
+import CreateAnnouncementModal from './CreateAnnouncementModal';
+import type { Announcement } from '@/lib/types';
 
 interface ChatAreaProps {
   channel: Channel | null;
@@ -170,6 +172,8 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
   const [activeUsersInChannel, setActiveUsersInChannel] = useState<{ id: string; name: string; is_online: boolean }[]>([]); // Users viewing this channel
   const [showChannelMembersManager, setShowChannelMembersManager] = useState(false);
   const [showChannelFilesManager, setShowChannelFilesManager] = useState(false);
+  const [announcements, setAnnouncements] = useState<Announcement[]>([]);
+  const [showCreateAnnouncementModal, setShowCreateAnnouncementModal] = useState(false);
   const [duplicateFileConfirm, setDuplicateFileConfirm] = useState<{ show: boolean; fileName: string; file: File | null }>({ show: false, fileName: '', file: null });
 
   // Members for mention-autocomplete
@@ -197,6 +201,65 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, []);
+
+  const isAnnouncementsView = channel?.id?.startsWith?.('announcements:');
+
+  useEffect(() => {
+    if (!isAnnouncementsView) return;
+    const campaignId = channel!.id.split(':')[1];
+    const load = async () => {
+      try {
+        const res = await fetch(`/api/announcements?campaign_id=${encodeURIComponent(campaignId)}`);
+        const j = await res.json();
+        if (res.ok) setAnnouncements(j.data || []);
+        else console.error('Failed to load announcements', j);
+      } catch (e) {
+        console.error('Failed to fetch announcements', e);
+      }
+    };
+    load();
+  }, [channel?.id]);
+
+  const toggleAnnouncementReaction = async (announcementId: string, emoji: string) => {
+    if (!user) return;
+    if (user.role === 'admin') return; // admins cannot react per policy
+
+    // Optimistic update
+    setAnnouncements(prev => prev.map(a => {
+      if (a.id !== announcementId) return a;
+      const reactions = Array.isArray(a.reactions) ? [...a.reactions] : [];
+      const idx = reactions.findIndex((r: any) => r.emoji === emoji);
+      const userAlready = idx >= 0 && reactions[idx].users.some((u: any) => u.id === user.id);
+
+      // remove user from all emoji groups first
+      reactions.forEach((r: any) => { r.users = r.users.filter((u: any) => u.id !== user.id); });
+
+      if (!userAlready) {
+        if (idx >= 0) reactions[idx].users.push({ id: user.id, name: user.name });
+        else reactions.push({ emoji, users: [{ id: user.id, name: user.name }] });
+      }
+
+      return { ...a, reactions };
+    }));
+
+    try {
+      const resp = await fetch('/api/announcements/reactions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ announcement_id: announcementId, emoji }),
+      });
+      const j = await resp.json();
+      if (!resp.ok) {
+        console.error('Failed to toggle announcement reaction', j);
+        return;
+      }
+
+      // replace reactions with server truth
+      setAnnouncements(prev => prev.map(a => a.id === announcementId ? { ...a, reactions: j.data || [] } : a));
+    } catch (e) {
+      console.error('Failed to toggle announcement reaction', e);
+    }
+  };
 
   const scrollToMessage = (messageId: string) => {
     const el = messageRefs.current[messageId];
@@ -453,6 +516,7 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
   // Fetch messages
   useEffect(() => {
     if (!channel) return;
+    if (channel.id?.startsWith?.('announcements:')) return; // skip pinned fetch for announcements pseudo-channel
 
     
 
@@ -476,6 +540,12 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
   // Initial load: fetch existing messages for the channel so chat persists across reloads
   useEffect(() => {
     if (!channel) {
+      setMessages([]);
+      return;
+    }
+
+    // If this is the announcements pseudo-channel, don't fetch messages from the messages table
+    if (channel.id?.startsWith?.('announcements:')) {
       setMessages([]);
       return;
     }
@@ -1720,6 +1790,11 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
           <button onClick={() => setShowChannelFilesManager(true)} className="p-2 rounded-xl text-muted hover:text-accent hover:bg-accent-light transition-all duration-200 hidden sm:flex" title="Files">
             <FileText className="w-4 h-4" />
           </button>
+          {isAnnouncementsView && (user?.role === 'admin' || user?.role === 'tl') && (
+            <button onClick={() => setShowCreateAnnouncementModal(true)} className="p-2 rounded-xl text-muted hover:text-foreground hover:bg-surface-hover transition-all duration-200" title="Post announcement">
+              <Bell className="w-4 h-4" />
+            </button>
+          )}
         </div>
       </div>
 
@@ -1766,396 +1841,435 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
         </div>
       )}
 
-      {/* Messages */}
+      {/* Messages / Announcements */}
       <div className="messages-scroll-area flex-1 overflow-y-auto px-4 py-2 sm:pb-4 pb-32">
-        {groupedMessages.map((group, gi) => (
-          <div key={gi}>
-            {/* Date separator */}
-            <div className="date-separator">
-              <span>{group.date}</span>
-            </div>
-
-            {group.messages.map((msg, mi) => {
-              const sender = usersMap[msg.sender_id];
-              const isOwn = msg.sender_id === user?.id;
-              const prevMsg = mi > 0 ? group.messages[mi - 1] : null;
-              const showAvatar = !prevMsg || prevMsg.sender_id !== msg.sender_id;
-              const isPinned = pinnedMessages.some(pm => pm.message_id === msg.id);
-              const isMentioned = !!myMentions[msg.id];
-
-              const replyMsg = msg.reply_to_id ? messages.find(m => m.id === msg.reply_to_id) : null;
-              const replySender = replyMsg ? usersMap[replyMsg.sender_id] : null;
-              const msgReactions = reactions[msg.id] || [];
-
-              return (
-                <div
-                  key={msg.id}
-                  ref={(el) => { messageRefs.current[msg.id] = el; }}
-                  className={`msg-enter group relative flex gap-2.5 px-2 py-0.5 hover:bg-surface-hover/30 rounded-xl transition-colors duration-150 ${
-                    showAvatar ? 'mt-4' : 'mt-0.5'
-                  } ${isOwn ? 'flex-row-reverse items-end' : 'items-start'} ${searchResults[activeSearchIndex] === msg.id ? 'ring-2 ring-secondary/30 bg-secondary-light/30' : ''}`}
-                >
-                  {/* Hover action buttons */}
-                  <div className="absolute -top-3 right-2 hidden group-hover:flex items-center gap-0.5 bg-surface border border-border rounded-lg shadow-sm px-1 py-0.5 z-10">
-                    <button
-                      onClick={() => setShowEmojiFor(showEmojiFor === msg.id ? null : msg.id)}
-                      className="p-1 text-muted hover:text-foreground hover:bg-surface-hover rounded transition-colors"
-                      title="React"
-                    >
-                      <SmilePlus className="w-3.5 h-3.5" />
-                    </button>
-                    <button
-                      onClick={() => togglePin(msg.id)}
-                      className="p-1 text-muted hover:text-foreground hover:bg-surface-hover rounded transition-colors"
-                      title={isPinned ? 'Unpin' : 'Pin'}
-                    >
-                      <MapPin className="w-3.5 h-3.5" />
-                    </button>
-                    {(user?.id === msg.sender_id || user?.role === 'admin') && (
-                      <>
-                        <button
-                          onClick={() => handleStartEdit(msg)}
-                          className="p-1 text-muted hover:text-foreground hover:bg-surface-hover rounded transition-colors"
-                          title="Edit"
-                        >
-                          <Edit className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          onClick={() => handleDelete(msg)}
-                          className="p-1 text-muted hover:text-foreground hover:bg-surface-hover rounded transition-colors"
-                          title="Delete"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </>
-                    )}
-                    <button
-                      onClick={() => handleReply(msg)}
-                      className="p-1 text-muted hover:text-foreground hover:bg-surface-hover rounded transition-colors"
-                      title="Reply"
-                    >
-                      <Reply className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-
-                  {/* Emoji picker popup */}
-                  {showEmojiFor === msg.id && (
-                    <div className="absolute -top-10 right-2 flex items-center gap-0.5 bg-surface border border-border rounded-lg shadow-lg px-2 py-1.5 z-20">
-                      {QUICK_EMOJIS.map(emoji => (
-                        <button
-                          key={emoji}
-                          onClick={() => toggleReaction(msg.id, emoji)}
-                          className="text-base hover:scale-125 transition-transform px-0.5"
-                          title={emoji}
-                        >
-                          {emoji}
-                        </button>
-                      ))}
+        {isAnnouncementsView ? (
+          <div>
+            {announcements.length === 0 ? (
+              <div className="px-4 py-6 text-center text-sm text-muted">No announcements yet</div>
+            ) : (
+              announcements.map((a) => (
+                <div key={a.id} className="mb-4 px-3 py-3 bg-surface border border-border rounded-xl">
+                  {a.image_url && (
+                    <div className="mb-3">
+                      <img src={a.image_url} alt={a.title || 'Announcement image'} className="w-full max-h-64 object-cover rounded-md" />
                     </div>
                   )}
-
-                  {/* Avatar */}
-                  <div className="w-9 shrink-0">
-                    {showAvatar && (
-                      <div
-                        className={`w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold shadow-sm ${
-                          isOwn
-                            ? 'avatar-gradient'
-                            : 'avatar-secondary'
-                        }`}
-                      >
-                        {sender?.name?.charAt(0).toUpperCase() || '?'}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Content */}
-                  <div className={`flex-1 min-w-0 ${isMentioned ? 'border-l-2 border-accent/40 pl-2' : ''} flex flex-col ${isOwn ? 'items-end' : 'items-start'}`}>
-                    {showAvatar && (
-                      <div className={`flex items-baseline gap-2 mb-0.5 ${isOwn ? 'flex-row-reverse' : ''}`}>
-                        <span className="font-semibold text-sm text-foreground">
-                          {sender?.name || 'Unknown'}
-                        </span>
-                        <span className="text-[10px] text-muted/70">
-                          {formatMessageTime(msg.created_at)}
-                        </span>
-                      </div>
-                    )}
-
-                    {/* Reply preview */}
-                    {replyMsg && (
-                      <div className="flex items-center gap-2 mb-1 pl-2 border-l-2 border-primary/40 rounded-sm">
-                        <div className="min-w-0">
-                          <span className="text-xs font-medium text-primary">
-                            {replySender?.name || 'Unknown'}
-                          </span>
-                          <p className="text-xs text-muted truncate max-w-xs">
-                            {replyMsg.text || (replyMsg.attachment_name ? `📎 ${replyMsg.attachment_name}` : 'Attachment')}
-                          </p>
+                  {a.title && <div className="font-semibold text-foreground mb-1">{a.title}</div>}
+                  <div className="text-sm text-foreground whitespace-pre-wrap">{a.body}</div>
+                      <div className="flex items-center justify-between mt-3">
+                        <div className="text-xs text-muted">Posted {new Date(a.created_at).toLocaleString()} by {a.created_by_name || a.created_by}</div>
+                        <div className="flex items-center gap-2">
+                          {(a.reactions || []).map((r: any) => (
+                            <button key={r.emoji} onClick={() => toggleAnnouncementReaction(a.id, r.emoji)} className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-surface-hover border border-border text-sm">
+                              <span>{r.emoji}</span>
+                              <span className="text-xs text-muted">{r.users.length}</span>
+                            </button>
+                          ))}
+                          {/* Quick add emoji options */}
+                          {['👍','❤️','🎉','🔥'].map(e => (
+                            <button key={e} onClick={() => toggleAnnouncementReaction(a.id, e)} className="px-2 py-1 rounded-full text-sm hover:bg-surface-hover">
+                              {e}
+                            </button>
+                          ))}
                         </div>
                       </div>
-                    )}
+                </div>
+              ))
+            )}
+          </div>
+        ) : (
+          groupedMessages.map((group, gi) => {
+            return (
+              <div key={gi}>
+                {/* Date separator */}
+                <div className="date-separator">
+                  <span>{group.date}</span>
+                </div>
 
-                    {/* Editing UI / Deleted placeholder / Message content */}
-                    {editingMessageId === msg.id ? (
-                      <div className={`inline-block max-w-[70%] ${isOwn ? 'ml-auto text-right' : ''}`}>
-                        <div className={`rounded-2xl px-4 py-2.5 ${isOwn ? 'msg-bubble-own' : 'msg-bubble-other'}`}>
-                          <input
-                            value={editingText}
-                            onChange={(e) => setEditingText(e.target.value)}
-                            className="w-full px-2 py-1 rounded-lg bg-white/10 border border-white/20 text-inherit"
-                          />
-                          <div className="mt-2 flex gap-2 justify-end">
-                            <button onClick={() => handleSaveEdit(false)} className="px-2 py-1 bg-primary text-white rounded">Save</button>
-                            {user?.role === 'admin' && (
-                              <button onClick={() => handleSaveEdit(true)} className="px-2 py-1 bg-amber-600 text-white rounded">Save silently</button>
-                            )}
-                            <button onClick={handleCancelEdit} className="px-2 py-1 bg-surface hover:bg-surface-hover border border-border rounded">Cancel</button>
+                {group.messages.map((msg, mi) => {
+                  const sender = usersMap[msg.sender_id];
+                  const isOwn = msg.sender_id === user?.id;
+                  const prevMsg = mi > 0 ? group.messages[mi - 1] : null;
+                  const showAvatar = !prevMsg || prevMsg.sender_id !== msg.sender_id;
+                  const isPinned = pinnedMessages.some(pm => pm.message_id === msg.id);
+                  const isMentioned = !!myMentions[msg.id];
+
+                  const replyMsg = msg.reply_to_id ? messages.find(m => m.id === msg.reply_to_id) : null;
+                  const replySender = replyMsg ? usersMap[replyMsg.sender_id] : null;
+                  const msgReactions = reactions[msg.id] || [];
+
+                  return (
+                    <div
+                      key={msg.id}
+                      ref={(el) => { messageRefs.current[msg.id] = el; }}
+                      className={`msg-enter group relative flex gap-2.5 px-2 py-0.5 hover:bg-surface-hover/30 rounded-xl transition-colors duration-150 ${
+                        showAvatar ? 'mt-4' : 'mt-0.5'
+                      } ${isOwn ? 'flex-row-reverse items-end' : 'items-start'} ${searchResults[activeSearchIndex] === msg.id ? 'ring-2 ring-secondary/30 bg-secondary-light/30' : ''}`}
+                    >
+                      {/* Hover action buttons */}
+                      <div className="absolute -top-3 right-2 hidden group-hover:flex items-center gap-0.5 bg-surface border border-border rounded-lg shadow-sm px-1 py-0.5 z-10">
+                        <button
+                          onClick={() => setShowEmojiFor(showEmojiFor === msg.id ? null : msg.id)}
+                          className="p-1 text-muted hover:text-foreground hover:bg-surface-hover rounded transition-colors"
+                          title="React"
+                        >
+                          <SmilePlus className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={() => togglePin(msg.id)}
+                          className="p-1 text-muted hover:text-foreground hover:bg-surface-hover rounded transition-colors"
+                          title={isPinned ? 'Unpin' : 'Pin'}
+                        >
+                          <MapPin className="w-3.5 h-3.5" />
+                        </button>
+                        {(user?.id === msg.sender_id || user?.role === 'admin') && (
+                          <>
+                            <button
+                              onClick={() => handleStartEdit(msg)}
+                              className="p-1 text-muted hover:text-foreground hover:bg-surface-hover rounded transition-colors"
+                              title="Edit"
+                            >
+                              <Edit className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => handleDelete(msg)}
+                              className="p-1 text-muted hover:text-foreground hover:bg-surface-hover rounded transition-colors"
+                              title="Delete"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </>
+                        )}
+                        <button
+                          onClick={() => handleReply(msg)}
+                          className="p-1 text-muted hover:text-foreground hover:bg-surface-hover rounded transition-colors"
+                          title="Reply"
+                        >
+                          <Reply className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+
+                      {/* Emoji picker popup */}
+                      {showEmojiFor === msg.id && (
+                        <div className="absolute -top-10 right-2 flex items-center gap-0.5 bg-surface border border-border rounded-lg shadow-lg px-2 py-1.5 z-20">
+                          {QUICK_EMOJIS.map(emoji => (
+                            <button
+                              key={emoji}
+                              onClick={() => toggleReaction(msg.id, emoji)}
+                              className="text-base hover:scale-125 transition-transform px-0.5"
+                              title={emoji}
+                            >
+                              {emoji}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Avatar */}
+                      <div className="w-9 shrink-0">
+                        {showAvatar && (
+                          <div
+                            className={`w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold shadow-sm ${
+                              isOwn
+                                ? 'avatar-gradient'
+                                : 'avatar-secondary'
+                            }`}
+                          >
+                            {sender?.name?.charAt(0).toUpperCase() || '?'}
                           </div>
-                        </div>
+                        )}
                       </div>
-                    ) : msg.is_deleted ? (
-                      <div className={`inline-block max-w-[70%] ${isOwn ? 'ml-auto text-right' : ''}`}>
-                        <div className="rounded-2xl px-4 py-2.5 bg-surface-hover/50 border border-border/50 text-muted italic">
-                          <p className="text-sm">Message deleted</p>
-                        </div>
-                      </div>
-                    ) : (
-                      <>
-                        {msg.text && (() => {
-                          const { parts } = parseMessageContent(msg.text);
-                          const hasInlineImages = parts.some(p => p.type === 'image');
-                          return (
-                            <div className={`inline-block max-w-[70%] ${isOwn ? 'ml-auto text-right' : ''}`}>
-                              <div className={`px-4 py-2.5 ${isOwn ? 'msg-bubble-own' : 'msg-bubble-other'}`}>
-                                <p className="text-sm break-words whitespace-pre-wrap">
-                                  {parts.map((part, pi) => {
-                                    if (part.type === 'text') {
-                                      if (!searchQuery) return <span key={pi}>{part.value}</span>;
-                                      const q = searchQuery.trim().toLowerCase();
-                                      if (!q) return <span key={pi}>{part.value}</span>;
-                                      const tokens = part.value.split(new RegExp(`(${escapeRegExp(q)})`, 'ig'));
-                                      return (
-                                        <span key={pi}>
-                                          {tokens.map((t, ti) => (
-                                            t.toLowerCase() === q ? (
-                                              <span key={ti} className="bg-yellow-200 text-foreground rounded px-0.5">{t}</span>
-                                            ) : (
-                                              <span key={ti}>{t}</span>
-                                            )
-                                          ))}
-                                        </span>
-                                      );
-                                    }
-                                    if (part.type === 'mention') {
-                                      return (
-                                        <span
-                                          key={pi}
-                                          className={`font-semibold ${isOwn ? 'text-yellow-200' : 'text-blue-600'}`}
-                                        >
-                                          {part.value}
-                                        </span>
-                                      );
-                                    }
-                                    if (part.type === 'link') {
-                                      return (
-                                        <a
-                                          key={pi}
-                                          href={part.value}
-                                          target="_blank"
-                                          rel="noopener noreferrer"
-                                          className={`${isOwn ? 'text-white/90' : 'text-primary'} hover:underline break-all`}
-                                        >
-                                          {part.value}
-                                        </a>
-                                      );
-                                    }
-                                    return null;
-                                  })}
-                                </p>
-                                {/* Render inline images from URLs in text */}
-                                {hasInlineImages && (
-                                  <div className="mt-2 space-y-2">
-                                    {parts.filter(p => p.type === 'image').map((part, pi) => (
-                                      <div key={pi} className="max-w-md">
-                                        <a href={part.value} target="_blank" rel="noopener noreferrer">
-                                          <img
-                                            src={part.value}
-                                            alt="Shared image"
-                                            className="rounded-lg max-h-72 object-contain cursor-pointer hover:opacity-90 transition-opacity"
-                                            loading="lazy"
-                                          />
-                                        </a>
-                                      </div>
-                                    ))}
-                                  </div>
-                                )}
-                                {msg.edited_at && (
-                                  <div className="text-[11px] text-muted mt-1">edited</div>
-                                )}
-                              </div>
-                            </div>
-                          );
-                        })()}
 
-                        {msg.attachment_url && (
-                          <div className={`mt-1 ${isOwn ? 'flex justify-end' : ''}`}>
-                            <div className={`inline-block max-w-[70%] ${isOwn ? 'ml-auto' : ''}`}>
-                              {isImageUrl(msg.attachment_url) ? (
-                                <div className="max-w-md">
-                                  <a
-                                    href={msg.attachment_url}
-                                    onClick={() => {
-                                      // Log image download
-                                      fetch('/api/compliance/log-file-operation', {
-                                        method: 'POST',
-                                        headers: { 'Content-Type': 'application/json' },
-                                        body: JSON.stringify({
-                                          action: 'download',
-                                          fileName: msg.attachment_name || 'image',
-                                          fileSize: msg.attachment_size || 0,
-                                          channelId: channel.id,
-                                          status: 'success',
-                                        }),
-                                      }).catch(err => console.warn('[AUDIT] Failed to log image download:', err));
-                                    }}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                  >
-                                    <img
-                                      src={msg.attachment_url}
-                                      alt={msg.attachment_name || 'Image'}
-                                      className="rounded-lg max-h-72 object-contain cursor-pointer hover:opacity-90 transition-opacity"
-                                      loading="lazy"
-                                    />
-                                  </a>
-                                </div>
-                              ) : !msg.attachment_name || msg.attachment_name === 'Link' ? (
-                                <a
-                                  href={msg.attachment_url}
-                                  onClick={() => {
-                                    // Log link click
-                                    fetch('/api/compliance/log-file-operation', {
-                                      method: 'POST',
-                                      headers: { 'Content-Type': 'application/json' },
-                                      body: JSON.stringify({
-                                        action: 'download',
-                                        fileName: 'link-click',
-                                        fileSize: 0,
-                                        channelId: channel.id,
-                                        status: 'success',
-                                      }),
-                                    }).catch(err => console.warn('[AUDIT] Failed to log link click:', err));
-                                  }}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className={`inline-flex items-center px-3 py-2 rounded-lg ${isOwn ? 'text-white/90 hover:text-white' : 'text-primary hover:text-primary-hover'} hover:underline break-all`}
-                                >
-                                  {msg.attachment_url.substring(0, 60)}
-                                </a>
-                              ) : (
-                                <a
-                                  href={msg.attachment_url}
-                                  download={msg.attachment_name}
-                                  onClick={() => {
-                                    // Log file download
-                                    fetch('/api/compliance/log-file-operation', {
-                                      method: 'POST',
-                                      headers: { 'Content-Type': 'application/json' },
-                                      body: JSON.stringify({
-                                        action: 'download',
-                                        fileName: msg.attachment_name,
-                                        fileSize: msg.attachment_size || 0,
-                                        channelId: channel.id,
-                                        status: 'success',
-                                      }),
-                                    }).catch(err => console.warn('[AUDIT] Failed to log file download:', err));
-                                  }}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className={`inline-flex items-center gap-2 px-3 py-2 rounded-lg ${isOwn ? 'bg-primary/90 text-white' : 'bg-surface border border-border text-foreground'} hover:opacity-95 transition-colors max-w-sm mt-1`}
-                                >
-                                  <FileText className={`w-8 h-8 ${isOwn ? 'text-white' : 'text-primary'} shrink-0`} />
-                                  <div className="min-w-0">
-                                    <p className="text-sm font-medium truncate">{msg.attachment_name || 'Attachment'}</p>
-                                    <p className="text-xs text-muted">{msg.attachment_size ? formatFileSize(msg.attachment_size) : 'Link'}</p>
-                                  </div>
-                                </a>
-                              )}
+                      {/* Content */}
+                      <div className={`flex-1 min-w-0 ${isMentioned ? 'border-l-2 border-accent/40 pl-2' : ''} flex flex-col ${isOwn ? 'items-end' : 'items-start'}`}>
+                        {showAvatar && (
+                          <div className={`flex items-baseline gap-2 mb-0.5 ${isOwn ? 'flex-row-reverse' : ''}`}>
+                            <span className="font-semibold text-sm text-foreground">
+                              {sender?.name || 'Unknown'}
+                            </span>
+                            <span className="text-[10px] text-muted/70">
+                              {formatMessageTime(msg.created_at)}
+                            </span>
+                          </div>
+                        )}
+
+                        {/* Reply preview */}
+                        {replyMsg && (
+                          <div className="flex items-center gap-2 mb-1 pl-2 border-l-2 border-primary/40 rounded-sm">
+                            <div className="min-w-0">
+                              <span className="text-xs font-medium text-primary">
+                                {replySender?.name || 'Unknown'}
+                              </span>
+                              <p className="text-xs text-muted truncate max-w-xs">
+                                {replyMsg.text || (replyMsg.attachment_name ? `📎 ${replyMsg.attachment_name}` : 'Attachment')}
+                              </p>
                             </div>
                           </div>
                         )}
-                      </>
-                    )}
-                    {/* Reactions display */}
-                    {msgReactions.length > 0 && (
-                      <div className={`flex flex-wrap gap-1 mt-1 ${isOwn ? 'justify-end' : ''}`}>
-                        {msgReactions.map(r => {
-                          const hasOwn = r.users.some(u => u.id === user?.id);
-                          const reactionKey = `${msg.id}-${r.emoji}`;
-                          return (
-                            <div key={r.emoji} className="relative">
-                              <button
-                                onClick={() => toggleReaction(msg.id, r.emoji)}
-                                onMouseEnter={() => setHoveredReaction(reactionKey)}
-                                onMouseLeave={() => setHoveredReaction(null)}
-                                className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-xs border transition-colors ${
-                                  hasOwn
-                                    ? 'bg-primary/10 border-primary/30 text-primary'
-                                    : 'bg-surface border-border text-muted hover:border-primary/30'
-                                }`}
-                              >
-                                <span>{r.emoji}</span>
-                                <span className="font-medium">{r.users.length}</span>
-                              </button>
-                              {/* Reaction tooltip */}
-                              {hoveredReaction === reactionKey && (
-                                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 px-2.5 py-1.5 bg-foreground text-background text-xs rounded-lg shadow-lg whitespace-nowrap z-30 pointer-events-none">
-                                  <div className="font-medium mb-0.5">{r.emoji} {r.users.length === 1 ? 'reaction' : 'reactions'}</div>
-                                  {r.users.map(u => (
-                                    <div key={u.id} className="text-background/80">{u.name}{u.id === user?.id ? ' (you)' : ''}</div>
-                                  ))}
-                                  <div className="absolute top-full left-1/2 -translate-x-1/2 -mt-px border-4 border-transparent border-t-foreground" />
+
+                        {/* Editing UI / Deleted placeholder / Message content */}
+                        {editingMessageId === msg.id ? (
+                          <div className={`inline-block max-w-[70%] ${isOwn ? 'ml-auto text-right' : ''}`}>
+                            <div className={`rounded-2xl px-4 py-2.5 ${isOwn ? 'msg-bubble-own' : 'msg-bubble-other'}`}>
+                              <input
+                                value={editingText}
+                                onChange={(e) => setEditingText(e.target.value)}
+                                className="w-full px-2 py-1 rounded-lg bg-white/10 border border-white/20 text-inherit"
+                              />
+                              <div className="mt-2 flex gap-2 justify-end">
+                                <button onClick={() => handleSaveEdit(false)} className="px-2 py-1 bg-primary text-white rounded">Save</button>
+                                {user?.role === 'admin' && (
+                                  <button onClick={() => handleSaveEdit(true)} className="px-2 py-1 bg-amber-600 text-white rounded">Save silently</button>
+                                )}
+                                <button onClick={handleCancelEdit} className="px-2 py-1 bg-surface hover:bg-surface-hover border border-border rounded">Cancel</button>
+                              </div>
+                            </div>
+                          </div>
+                        ) : msg.is_deleted ? (
+                          <div className={`inline-block max-w-[70%] ${isOwn ? 'ml-auto text-right' : ''}`}>
+                            <div className="rounded-2xl px-4 py-2.5 bg-surface-hover/50 border border-border/50 text-muted italic">
+                              <p className="text-sm">Message deleted</p>
+                            </div>
+                          </div>
+                        ) : (
+                          <>
+                            {msg.text && (() => {
+                              const { parts } = parseMessageContent(msg.text);
+                              const hasInlineImages = parts.some(p => p.type === 'image');
+                              return (
+                                <div className={`inline-block max-w-[70%] ${isOwn ? 'ml-auto text-right' : ''}`}>
+                                  <div className={`px-4 py-2.5 ${isOwn ? 'msg-bubble-own' : 'msg-bubble-other'}`}>
+                                    <p className="text-sm break-words whitespace-pre-wrap">
+                                      {parts.map((part, pi) => {
+                                        if (part.type === 'text') {
+                                          if (!searchQuery) return <span key={pi}>{part.value}</span>;
+                                          const q = searchQuery.trim().toLowerCase();
+                                          if (!q) return <span key={pi}>{part.value}</span>;
+                                          const tokens = part.value.split(new RegExp(`(${escapeRegExp(q)})`, 'ig'));
+                                          return (
+                                            <span key={pi}>
+                                              {tokens.map((t, ti) => (
+                                                t.toLowerCase() === q ? (
+                                                  <span key={ti} className="bg-yellow-200 text-foreground rounded px-0.5">{t}</span>
+                                                ) : (
+                                                  <span key={ti}>{t}</span>
+                                                )
+                                              ))}
+                                            </span>
+                                          );
+                                        }
+                                        if (part.type === 'mention') {
+                                          return (
+                                            <span
+                                              key={pi}
+                                              className={`font-semibold ${isOwn ? 'text-yellow-200' : 'text-blue-600'}`}
+                                            >
+                                              {part.value}
+                                            </span>
+                                          );
+                                        }
+                                        if (part.type === 'link') {
+                                          return (
+                                            <a
+                                              key={pi}
+                                              href={part.value}
+                                              target="_blank"
+                                              rel="noopener noreferrer"
+                                              className={`${isOwn ? 'text-white/90' : 'text-primary'} hover:underline break-all`}
+                                            >
+                                              {part.value}
+                                            </a>
+                                          );
+                                        }
+                                        return null;
+                                      })}
+                                    </p>
+                                    {/* Render inline images from URLs in text */}
+                                    {hasInlineImages && (
+                                      <div className="mt-2 space-y-2">
+                                        {parts.filter(p => p.type === 'image').map((part, pi) => (
+                                          <div key={pi} className="max-w-md">
+                                            <a href={part.value} target="_blank" rel="noopener noreferrer">
+                                              <img
+                                                src={part.value}
+                                                alt="Shared image"
+                                                className="rounded-lg max-h-72 object-contain cursor-pointer hover:opacity-90 transition-opacity"
+                                                loading="lazy"
+                                              />
+                                            </a>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
+                                    {msg.edited_at && (
+                                      <div className="text-[11px] text-muted mt-1">edited</div>
+                                    )}
+                                  </div>
                                 </div>
-                              )}
+                              );
+                            })()}
+
+                            {msg.attachment_url && (
+                              <div className={`mt-1 ${isOwn ? 'flex justify-end' : ''}`}>
+                                <div className={`inline-block max-w-[70%] ${isOwn ? 'ml-auto' : ''}`}>
+                                  {isImageUrl(msg.attachment_url) ? (
+                                    <div className="max-w-md">
+                                      <a
+                                        href={msg.attachment_url}
+                                        onClick={() => {
+                                          // Log image download
+                                          fetch('/api/compliance/log-file-operation', {
+                                            method: 'POST',
+                                            headers: { 'Content-Type': 'application/json' },
+                                            body: JSON.stringify({
+                                              action: 'download',
+                                              fileName: msg.attachment_name || 'image',
+                                              fileSize: msg.attachment_size || 0,
+                                              channelId: channel.id,
+                                              status: 'success',
+                                            }),
+                                          }).catch(err => console.warn('[AUDIT] Failed to log image download:', err));
+                                        }}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                      >
+                                        <img
+                                          src={msg.attachment_url}
+                                          alt={msg.attachment_name || 'Image'}
+                                          className="rounded-lg max-h-72 object-contain cursor-pointer hover:opacity-90 transition-opacity"
+                                          loading="lazy"
+                                        />
+                                      </a>
+                                    </div>
+                                  ) : !msg.attachment_name || msg.attachment_name === 'Link' ? (
+                                    <a
+                                      href={msg.attachment_url}
+                                      onClick={() => {
+                                        // Log link click
+                                        fetch('/api/compliance/log-file-operation', {
+                                          method: 'POST',
+                                          headers: { 'Content-Type': 'application/json' },
+                                          body: JSON.stringify({
+                                            action: 'download',
+                                            fileName: 'link-click',
+                                            fileSize: 0,
+                                            channelId: channel.id,
+                                            status: 'success',
+                                          }),
+                                        }).catch(err => console.warn('[AUDIT] Failed to log link click:', err));
+                                      }}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className={`inline-flex items-center px-3 py-2 rounded-lg ${isOwn ? 'text-white/90 hover:text-white' : 'text-primary hover:text-primary-hover'} hover:underline break-all`}
+                                    >
+                                      {msg.attachment_url.substring(0, 60)}
+                                    </a>
+                                  ) : (
+                                    <a
+                                      href={msg.attachment_url}
+                                      download={msg.attachment_name}
+                                      onClick={() => {
+                                        // Log file download
+                                        fetch('/api/compliance/log-file-operation', {
+                                          method: 'POST',
+                                          headers: { 'Content-Type': 'application/json' },
+                                          body: JSON.stringify({
+                                            action: 'download',
+                                            fileName: msg.attachment_name,
+                                            fileSize: msg.attachment_size || 0,
+                                            channelId: channel.id,
+                                            status: 'success',
+                                          }),
+                                        }).catch(err => console.warn('[AUDIT] Failed to log file download:', err));
+                                      }}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className={`inline-flex items-center gap-2 px-3 py-2 rounded-lg ${isOwn ? 'bg-primary/90 text-white' : 'bg-surface border border-border text-foreground'} hover:opacity-95 transition-colors max-w-sm mt-1`}
+                                    >
+                                      <FileText className={`w-8 h-8 ${isOwn ? 'text-white' : 'text-primary'} shrink-0`} />
+                                      <div className="min-w-0">
+                                        <p className="text-sm font-medium truncate">{msg.attachment_name || 'Attachment'}</p>
+                                        <p className="text-xs text-muted">{msg.attachment_size ? formatFileSize(msg.attachment_size) : 'Link'}</p>
+                                      </div>
+                                    </a>
+                                  )}
+                                </div>
+                              </div>
+                            )}
+                          </>
+                        )}
+                        {/* Reactions display */}
+                        {msgReactions.length > 0 && (
+                          <div className={`flex flex-wrap gap-1 mt-1 ${isOwn ? 'justify-end' : ''}`}>
+                            {msgReactions.map(r => {
+                              const hasOwn = r.users.some(u => u.id === user?.id);
+                              const reactionKey = `${msg.id}-${r.emoji}`;
+                              return (
+                                <div key={r.emoji} className="relative">
+                                  <button
+                                    onClick={() => toggleReaction(msg.id, r.emoji)}
+                                    onMouseEnter={() => setHoveredReaction(reactionKey)}
+                                    onMouseLeave={() => setHoveredReaction(null)}
+                                    className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-xs border transition-colors ${
+                                      hasOwn
+                                        ? 'bg-primary/10 border-primary/30 text-primary'
+                                        : 'bg-surface border-border text-muted hover:border-primary/30'
+                                    }`}
+                                  >
+                                    <span>{r.emoji}</span>
+                                    <span className="font-medium">{r.users.length}</span>
+                                  </button>
+                                  {/* Reaction tooltip */}
+                                  {hoveredReaction === reactionKey && (
+                                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 px-2.5 py-1.5 bg-foreground text-background text-xs rounded-lg shadow-lg whitespace-nowrap z-30 pointer-events-none">
+                                      <div className="font-medium mb-0.5">{r.emoji} {r.users.length === 1 ? 'reaction' : 'reactions'}</div>
+                                      {r.users.map(u => (
+                                        <div key={u.id} className="text-background/80">{u.name}{u.id === user?.id ? ' (you)' : ''}</div>
+                                      ))}
+                                      <div className="absolute top-full left-1/2 -translate-x-1/2 -mt-px border-4 border-transparent border-t-foreground" />
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+
+                        {/* Seen by indicator — show below the last message in the channel */}
+                        {msg.id === messages[messages.length - 1]?.id && (() => {
+                          const seenUsers = channelReaders.filter(
+                            r => r.user_id !== user?.id && new Date(r.last_read_at) >= new Date(msg.created_at)
+                          );
+                          if (seenUsers.length === 0) return null;
+                          return (
+                            <div className="flex items-center gap-1.5 mt-1.5 text-[11px] text-muted">
+                              <Eye className="w-3 h-3" />
+                              <span>
+                                Seen by{' '}
+                                {seenUsers.length <= 3
+                                  ? seenUsers.map(u => u.user_name).join(', ')
+                                  : `${seenUsers.slice(0, 2).map(u => u.user_name).join(', ')} and ${seenUsers.length - 2} more`
+                                }
+                              </span>
                             </div>
                           );
-                        })}
+                        })()}
                       </div>
-                    )}
 
-                    {/* Seen by indicator — show below the last message in the channel */}
-                    {msg.id === messages[messages.length - 1]?.id && (() => {
-                      const seenUsers = channelReaders.filter(
-                        r => r.user_id !== user?.id && new Date(r.last_read_at) >= new Date(msg.created_at)
-                      );
-                      if (seenUsers.length === 0) return null;
-                      return (
-                        <div className="flex items-center gap-1.5 mt-1.5 text-[11px] text-muted">
-                          <Eye className="w-3 h-3" />
-                          <span>
-                            Seen by{' '}
-                            {seenUsers.length <= 3
-                              ? seenUsers.map(u => u.user_name).join(', ')
-                              : `${seenUsers.slice(0, 2).map(u => u.user_name).join(', ')} and ${seenUsers.length - 2} more`
-                            }
-                          </span>
-                        </div>
-                      );
-                    })()}
-                  </div>
-
-                  {/* Time on hover for non-avatar msgs */}
-                  {!showAvatar && (
-                    <span className="text-[10px] text-muted opacity-0 group-hover:opacity-100 transition-opacity self-center shrink-0">
-                      {formatMessageTime(msg.created_at)}
-                    </span>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        ))}
+                      {/* Time on hover for non-avatar msgs */}
+                      {!showAvatar && (
+                        <span className="text-[10px] text-muted opacity-0 group-hover:opacity-100 transition-opacity self-center shrink-0">
+                          {formatMessageTime(msg.created_at)}
+                        </span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })
+        )}
         <div ref={messagesEndRef} />
       </div>
 
@@ -2236,7 +2350,8 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
             </button>
           </div>
         )}
-        <form onSubmit={handleSend} className="flex flex-col gap-2">
+        {!isAnnouncementsView && (
+          <form onSubmit={handleSend} className="flex flex-col gap-2">
           {/* Main input row */}
           <div className="flex items-end gap-2">
             <input
@@ -2372,7 +2487,8 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
               {checksLoading ? 'Checking...' : '✓ Check'}
             </button>
           </div>
-        </form>
+          </form>
+        )}
       </div>
 
       {/* GIF Picker Modal */}
@@ -2433,6 +2549,24 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
           channel={channel}
           isOpen={showChannelFilesManager}
           onClose={() => setShowChannelFilesManager(false)}
+        />
+      )}
+
+      {/* Create Announcement Modal */}
+      {isAnnouncementsView && (
+        <CreateAnnouncementModal
+          isOpen={showCreateAnnouncementModal}
+          campaignId={channel!.id.split(':')[1]}
+          onClose={() => setShowCreateAnnouncementModal(false)}
+          onCreated={async () => {
+            // refresh announcements
+            try {
+              const campaignId = channel!.id.split(':')[1];
+              const res = await fetch(`/api/announcements?campaign_id=${encodeURIComponent(campaignId)}`);
+              const j = await res.json();
+              if (res.ok) setAnnouncements(j.data || []);
+            } catch (e) { console.error(e); }
+          }}
         />
       )}
     </div>

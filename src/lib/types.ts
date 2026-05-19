@@ -58,3 +58,21 @@ export interface Reaction {
   user_id: string;
   user_name: string;
 }
+
+export interface Announcement {
+  id: string;
+  campaign_id: string;
+  title?: string | null;
+  body: string;
+  created_by: string;
+  created_at: string;
+  image_url?: string | null;
+  created_by_name?: string | null;
+  reactions?: AnnouncementReaction[];
+}
+
+export interface AnnouncementReaction {
+  announcement_id: string;
+  emoji: string;
+  users: { id: string; name?: string | null }[];
+}

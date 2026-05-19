@@ -308,6 +308,16 @@ export function Sidebar({ selectedChannel, onSelectChannel, collapsed, onToggleC
                 }}
               >
                 <div className="ml-1 py-0.5">
+                  {/** Announcements entry for specific campaigns */}
+                  {(campaign.name === 'SSU' || campaign.name === 'SALES') && (
+                    <button
+                      onClick={() => handleSelectChannel({ id: `announcements:${campaign.id}`, name: 'Announcements', campaign_id: campaign.id, created_by: null, created_at: new Date().toISOString() } as any)}
+                      className={`w-full flex items-center gap-2.5 px-3 py-[7px] text-sm transition-all duration-200 text-muted hover:text-foreground hover:bg-surface-hover`}
+                    >
+                      <Bell className={`w-4 h-4 shrink-0`} />
+                      <span className="truncate flex-1 text-left">Announcements</span>
+                    </button>
+                  )}
                   {campaignChannels.map(channel => {
                     const isActive = selectedChannel?.id === channel.id;
                     const hasUnread = unreadCounts[channel.id] > 0 && !isActive;
