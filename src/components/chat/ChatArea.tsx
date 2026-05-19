@@ -188,6 +188,11 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
   const fileInputRef = useRef<HTMLInputElement>(null);
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const supabase = createClient();
+  // Cache and in-flight tracking for grammar checks to reduce API calls
+  const checkCacheRef = useRef<Map<string, any>>(new Map());
+  const inFlightChecksRef = useRef<Map<string, Promise<any>>>(new Map());
+  const checkDelayRef = useRef<number | null>(null);
+  const CHECK_DEBOUNCE_MS = 400;
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -860,55 +865,101 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
   };
 
   const handleCheck = async (mode = checkMode) => {
-    const t = text || '';
-    if (!t.trim()) return [];
+    const t = (text || '').trim();
+    if (!t) return [];
+
+    const key = `${mode}::${t}`;
+
+    // If cached, return cached result immediately
+    if (checkCacheRef.current.has(key)) {
+      const cached = checkCacheRef.current.get(key);
+      setSuggestions(cached.matches || []);
+      setShowChecks(true);
+      return cached.matches || [];
+    }
+
     setChecksLoading(true);
     setShowChecks(false);
-    try {
-      const json = await checkText(t);
-      let matches: any[] = Array.isArray(json?.matches) ? json.matches.slice() : [];
 
-      const term = (mode || '').toLowerCase();
-      const isGrammarMatch = (m: any) => {
-        const issue = String(m?.rule?.issueType || '').toLowerCase();
-        const cat = String(m?.rule?.category?.id || '').toLowerCase();
-        const id = String(m?.rule?.id || '').toLowerCase();
-        return issue.includes('grammar') || cat.includes('grammar') || id.includes('grammar');
-      };
-      const isSpellingMatch = (m: any) => {
-        const issue = String(m?.rule?.issueType || '').toLowerCase();
-        const cat = String(m?.rule?.category?.id || '').toLowerCase();
-        const id = String(m?.rule?.id || '').toLowerCase();
-        // LanguageTool may use MORFOLOGIK or TYPOS for spelling-related rules
-        return issue.includes('misspelling') || cat.includes('typos') || id.includes('morfologik') || id.includes('spelling');
-      };
-
-      if (mode === 'grammar') {
-        matches = matches.filter(isGrammarMatch);
-      } else if (mode === 'spelling') {
-        matches = matches.filter(isSpellingMatch);
+    // If an identical request is in-flight, reuse it
+    if (inFlightChecksRef.current.has(key)) {
+      try {
+        const json = await inFlightChecksRef.current.get(key);
+        const matches = json.matches || [];
+        setSuggestions(matches);
+        setShowChecks(true);
+        return matches;
+      } catch (e) {
+        console.error('Check failed', e);
+        setSuggestions([]);
+        setShowChecks(false);
+        return [];
+      } finally {
+        setChecksLoading(false);
       }
-
-      // Normalize matches for downstream usage
-      matches = matches.map((m: any) => ({
-        ...m,
-        offset: typeof m.offset === 'number' ? m.offset : (m?.context?.offset ?? 0),
-        length: typeof m.length === 'number' ? m.length : (m?.context?.length ?? 0),
-        replacements: Array.isArray(m.replacements) ? m.replacements : (m.replacements ? [m.replacements] : []),
-      }));
-
-      setSuggestions(matches || []);
-      setShowChecks(true);
-      return matches || [];
-    } catch (e) {
-      console.error('Check failed', e);
-      setSuggestions([]);
-      setShowChecks(false);
-      alert('Grammar check failed.');
-      return [];
-    } finally {
-      setChecksLoading(false);
     }
+
+    // Debounce actual network request to avoid rapid repeated calls
+    return new Promise<any>((resolve) => {
+      try {
+        if (checkDelayRef.current) {
+          try { window.clearTimeout(checkDelayRef.current); } catch (e) {}
+          checkDelayRef.current = null;
+        }
+      } catch (e) {}
+
+      checkDelayRef.current = window.setTimeout(async () => {
+        const perform = (async () => {
+          try {
+            const promise = checkText(t);
+            inFlightChecksRef.current.set(key, promise);
+            const json = await promise;
+
+            let matches: any[] = Array.isArray(json?.matches) ? json.matches.slice() : [];
+
+            const isGrammarMatch = (m: any) => {
+              const issue = String(m?.rule?.issueType || '').toLowerCase();
+              const cat = String(m?.rule?.category?.id || '').toLowerCase();
+              const id = String(m?.rule?.id || '').toLowerCase();
+              return issue.includes('grammar') || cat.includes('grammar') || id.includes('grammar');
+            };
+            const isSpellingMatch = (m: any) => {
+              const issue = String(m?.rule?.issueType || '').toLowerCase();
+              const cat = String(m?.rule?.category?.id || '').toLowerCase();
+              const id = String(m?.rule?.id || '').toLowerCase();
+              return issue.includes('misspelling') || cat.includes('typos') || id.includes('morfologik') || id.includes('spelling');
+            };
+
+            if (mode === 'grammar') matches = matches.filter(isGrammarMatch);
+            else if (mode === 'spelling') matches = matches.filter(isSpellingMatch);
+
+            matches = matches.map((m: any) => ({
+              ...m,
+              offset: typeof m.offset === 'number' ? m.offset : (m?.context?.offset ?? 0),
+              length: typeof m.length === 'number' ? m.length : (m?.context?.length ?? 0),
+              replacements: Array.isArray(m.replacements) ? m.replacements : (m.replacements ? [m.replacements] : []),
+            }));
+
+            // Cache result
+            checkCacheRef.current.set(key, { raw: json, matches });
+
+            setSuggestions(matches || []);
+            setShowChecks(true);
+            return matches || [];
+          } catch (err) {
+            console.error('Check failed', err);
+            setSuggestions([]);
+            setShowChecks(false);
+            return [];
+          } finally {
+            inFlightChecksRef.current.delete(key);
+            setChecksLoading(false);
+          }
+        })();
+
+        resolve(perform);
+      }, CHECK_DEBOUNCE_MS) as unknown as number;
+    });
   };
 
   const applySuggestion = async (index: number, replacement: string) => {
