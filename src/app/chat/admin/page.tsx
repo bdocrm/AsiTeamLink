@@ -157,7 +157,7 @@ export default function AdminPage() {
       // Enrich with user information
       if (data) {
         const enrichedRequests = await Promise.all(
-          data.map(async (req) => {
+          data.map(async (req: PasswordResetRequest) => {
             const { data: userProfile } = await supabase
               .from('users')
               .select('name, email')
