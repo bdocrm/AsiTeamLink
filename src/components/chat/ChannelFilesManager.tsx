@@ -53,7 +53,7 @@ export function ChannelFilesManager({ channel, isOpen, onClose }: ChannelFilesMa
       }
 
       // Fetch sender data separately to avoid relationship ambiguity
-      const senderIds = [...new Set((data || []).map(m => m.sender_id))];
+      const senderIds = [...new Set((data || []).map((m: any) => m.sender_id))];
       let senderMap: { [key: string]: string } = {};
 
       if (senderIds.length > 0) {
@@ -62,13 +62,14 @@ export function ChannelFilesManager({ channel, isOpen, onClose }: ChannelFilesMa
           .select('id, name')
           .in('id', senderIds);
 
-        senderMap = (senders || []).reduce((acc, u) => {
-          acc[u.id] = u.name;
+        type SenderRow = { id: string; name?: string | null };
+        senderMap = (senders || []).reduce((acc: { [key: string]: string }, u: SenderRow) => {
+          acc[u.id] = u.name || 'Unknown';
           return acc;
         }, {} as { [key: string]: string });
       }
 
-      const formattedFiles = (data || []).map(m => ({
+      const formattedFiles = (data || []).map((m: any) => ({
         message_id: m.id,
         sender_id: m.sender_id,
         sender_name: senderMap[m.sender_id] || 'Unknown',

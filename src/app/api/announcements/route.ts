@@ -63,9 +63,9 @@ export async function GET(req: Request) {
 
     const result = (announcements as any[]).map(a => {
       const rows = reactionsByAnnouncement[a.id] || [];
-      const byEmoji: Record<string, { emoji: string; users: { id: string; name?: string | null }[] }> = {};
+      const byEmoji: Record<string, { announcement_id: string; emoji: string; users: { id: string; name?: string | null }[] }> = {};
       rows.forEach((rr: any) => {
-        if (!byEmoji[rr.emoji]) byEmoji[rr.emoji] = { emoji: rr.emoji, users: [] };
+        if (!byEmoji[rr.emoji]) byEmoji[rr.emoji] = { announcement_id: a.id, emoji: rr.emoji, users: [] };
         byEmoji[rr.emoji].users.push({ id: rr.user_id, name: usersMap[rr.user_id]?.name || null });
       });
       return { ...a, reactions: Object.values(byEmoji), created_by_name: usersMap[a.created_by]?.name || null };

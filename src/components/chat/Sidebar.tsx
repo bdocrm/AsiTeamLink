@@ -62,7 +62,7 @@ export function Sidebar({ selectedChannel, onSelectChannel, collapsed, onToggleC
       .on(
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'messages' },
-        (payload) => {
+        (payload: any) => {
           const msg = payload.new as { channel_id: string; sender_id: string; text: string | null };
           if (msg.sender_id === user.id) return;
 

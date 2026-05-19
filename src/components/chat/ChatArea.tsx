@@ -236,7 +236,7 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
 
       if (!userAlready) {
         if (idx >= 0) reactions[idx].users.push({ id: user.id, name: user.name });
-        else reactions.push({ emoji, users: [{ id: user.id, name: user.name }] });
+        else reactions.push({ announcement_id: announcementId, emoji, users: [{ id: user.id, name: user.name }] });
       }
 
       return { ...a, reactions };
@@ -641,8 +641,8 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
 
     const mentionSub = supabase
       .channel(`mentions:${user.id}`)
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'message_mentions', filter: `mentioned_user_id=eq.${user.id}` }, (payload) => {
-        const newRow = payload.new as any;
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'message_mentions', filter: `mentioned_user_id=eq.${user.id}` }, (payload: any) => {
+        const newRow = (payload as any).new as any;
         if (newRow && newRow.message_id && newRow.channel_id === channel.id) {
           setMyMentions(prev => ({ ...prev, [newRow.message_id]: true }));
         }
@@ -672,8 +672,8 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
           table: 'messages',
           filter: `channel_id=eq.${channel.id}`,
         },
-        async (payload) => {
-          const newMsg = payload.new as Message;
+        async (payload: any) => {
+          const newMsg = (payload as any).new as Message;
           setMessages(prev => [...prev, newMsg]);
 
           // Fetch sender if not cached
@@ -699,8 +699,8 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
           table: 'messages',
           filter: `channel_id=eq.${channel.id}`,
         },
-        (payload) => {
-          const updatedMsg = payload.new as Message;
+        (payload: any) => {
+          const updatedMsg = (payload as any).new as Message;
           setMessages(prev =>
             prev.map(m => (m.id === updatedMsg.id ? updatedMsg : m))
           );
@@ -715,8 +715,8 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
           schema: 'public',
           table: 'messages',
         },
-        (payload) => {
-          const deletedMsg = payload.old as Message;
+        (payload: any) => {
+          const deletedMsg = (payload as any).old as Message;
           // Only update if it's from the current channel
           if (deletedMsg.channel_id === channel.id) {
             setMessages(prev =>
@@ -745,8 +745,8 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
     const typingChannel = supabase.channel(`typing:${channel.id}`);
 
     typingChannel
-      .on('broadcast', { event: 'typing' }, (payload) => {
-        const { user_id, user_name } = payload.payload as { user_id: string; user_name: string };
+      .on('broadcast', { event: 'typing' }, (payload: any) => {
+        const { user_id, user_name } = (payload as any).payload as { user_id: string; user_name: string };
         if (user_id === user.id) return; // ignore own typing
 
         setTypingUsers(prev => {
@@ -812,7 +812,7 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
           return next;
         });
       })
-      .subscribe(async (status) => {
+      .subscribe(async (status: any) => {
         if (status === 'SUBSCRIBED') {
           // Announce this user's presence
           await presenceChannel.track({
@@ -837,8 +837,8 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
     const callChannel = supabase.channel(`call:${channel.id}`);
 
     callChannel
-      .on('broadcast', { event: 'call_started' }, (payload) => {
-        const { user_name } = payload.payload as { user_id: string; user_name: string };
+      .on('broadcast', { event: 'call_started' }, (payload: any) => {
+        const { user_name } = (payload as any).payload as { user_id: string; user_name: string };
         setActiveCall({ startedBy: user_name });
       })
       .on('broadcast', { event: 'call_ended' }, () => {
@@ -1351,7 +1351,7 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
           .eq('channel_id', channel.id)
           .not('attachment_url', 'is', null);
 
-        const existingNames = existingAttachments?.map(m => m.attachment_name) || [];
+        const existingNames = existingAttachments?.map((m: any) => m.attachment_name) || [];
         if (existingNames.includes(fileAttachment.name)) {
           setSending(false);
           setDuplicateFileConfirm({ show: true, fileName: fileAttachment.name, file: fileAttachment });

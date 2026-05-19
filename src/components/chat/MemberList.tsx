@@ -41,7 +41,7 @@ export function MemberList({ channel }: MemberListProps) {
         .eq('channel_id', channel.id);
 
       if (data && data.length > 0) {
-        const userIds = data.map(cm => cm.user_id);
+        const userIds = data.map((cm: any) => cm.user_id);
         
         // Fetch user details for channel members only
         const { data: members } = await supabase
@@ -131,7 +131,7 @@ export function MemberList({ channel }: MemberListProps) {
           }
         }
       })
-      .subscribe(async (status) => {
+      .subscribe(async (status: any) => {
         if (status === 'SUBSCRIBED' && currentUser) {
           try {
             const ua = typeof navigator !== 'undefined' ? navigator.userAgent : '';
@@ -174,7 +174,7 @@ export function MemberList({ channel }: MemberListProps) {
         );
         setActiveInChannel(viewingIds);
       })
-      .subscribe(async (status) => {
+      .subscribe(async (status: any) => {
         if (status === 'SUBSCRIBED' && currentUser) {
           try {
             const ua = typeof navigator !== 'undefined' ? navigator.userAgent : '';
