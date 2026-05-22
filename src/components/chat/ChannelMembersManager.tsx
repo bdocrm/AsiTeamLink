@@ -85,7 +85,7 @@ export function ChannelMembersManager({ channel, isOpen, onClose }: ChannelMembe
 
     const membersChannel = supabase.channel(`realtime:channel_members:${channel.id}`);
 
-    membersChannel.on('postgres_changes', { event: '*', schema: 'public', table: 'channel_members', filter: `channel_id=eq.${channel.id}` }, (payload) => {
+    membersChannel.on('postgres_changes', { event: '*', schema: 'public', table: 'channel_members', filter: `channel_id=eq.${channel.id}` }, (payload: any) => {
       try {
         // refresh members and available list on any change
         fetchMembers();
