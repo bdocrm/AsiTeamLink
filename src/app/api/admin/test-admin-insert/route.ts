@@ -6,7 +6,7 @@ import { headers } from 'next/headers';
 // Protect with a short-lived token set via `DEV_ADMIN_TEST_TOKEN` environment variable.
 export async function POST(req: Request) {
   try {
-    const reqHeaders = headers();
+    const reqHeaders = await headers();
     const token = reqHeaders.get('x-admin-test-token') || reqHeaders.get('authorization')?.replace(/^Bearer\s+/i, '') || '';
     const expected = process.env.DEV_ADMIN_TEST_TOKEN || '';
     if (!expected) {
