@@ -79,6 +79,27 @@ export function ChannelMembersManager({ channel, isOpen, onClose }: ChannelMembe
     };
   }, [isOpen, channel.id, user]);
 
+  // Realtime subscription: refresh members when channel_members changes
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const membersChannel = supabase.channel(`realtime:channel_members:${channel.id}`);
+
+    membersChannel.on('postgres_changes', { event: '*', schema: 'public', table: 'channel_members', filter: `channel_id=eq.${channel.id}` }, (payload) => {
+      try {
+        // refresh members and available list on any change
+        fetchMembers();
+        fetchAvailableMembers();
+      } catch (e) {
+        // ignore
+      }
+    }).subscribe();
+
+    return () => {
+      try { supabase.removeChannel(membersChannel); } catch (e) {}
+    };
+  }, [isOpen, channel.id]);
+
   const fetchMembers = async () => {
     try {
       setLoading(true);
