@@ -29,7 +29,8 @@ export async function GET(req: Request) {
       return NextResponse.json({ error: annErr.message || 'Failed to load announcements' }, { status: 500 });
     }
 
-    const announcements = annData || [];
+    // Normalize older schemas that may use `content` instead of `body`.
+    const announcements = (annData || []).map((a: any) => ({ ...a, body: a.body ?? a.content }));
 
     // Load reactions for these announcements
     const annIds = announcements.map((a: any) => a.id).filter(Boolean);
@@ -44,7 +45,7 @@ export async function GET(req: Request) {
     // fetch user names for reactors
     // collect user ids for both reactors and announcers
     const reactorUserIds = Array.from(new Set((reactRows || []).map((r: any) => r.user_id)));
-    const announcerIds = Array.from(new Set((announcements as any[]).map(a => a.created_by).filter(Boolean)));
+    const announcerIds = Array.from(new Set((announcements as any[]).map(a => a.created_by || a.author_id).filter(Boolean)));
     const userIds = Array.from(new Set([...reactorUserIds, ...announcerIds]));
     let usersMap: Record<string, { id: string; name?: string | null }> = {};
     if (userIds.length > 0) {
@@ -68,7 +69,7 @@ export async function GET(req: Request) {
         if (!byEmoji[rr.emoji]) byEmoji[rr.emoji] = { announcement_id: a.id, emoji: rr.emoji, users: [] };
         byEmoji[rr.emoji].users.push({ id: rr.user_id, name: usersMap[rr.user_id]?.name || null });
       });
-      return { ...a, reactions: Object.values(byEmoji), created_by_name: usersMap[a.created_by]?.name || null };
+      return { ...a, reactions: Object.values(byEmoji), created_by_name: usersMap[a.created_by]?.name || usersMap[a.author_id]?.name || null };
     });
 
     return NextResponse.json({ data: result });
@@ -83,7 +84,8 @@ export async function POST(req: Request) {
     const payload = await req.json();
     let campaign_id = payload?.campaign_id;
     const title = payload?.title;
-    const body = payload?.body;
+    // Accept either `body` or legacy `content` from callers / older DB schemas
+    const body = payload?.body ?? payload?.content;
     const image_url = payload?.image_url || null;
     if (!campaign_id || !body) return NextResponse.json({ error: 'campaign_id and body required' }, { status: 400 });
     // Normalize channel-style ids like "announcements:<uuid>"
@@ -113,7 +115,9 @@ export async function POST(req: Request) {
 
     const adminSupabase = createAdminClient();
     console.log('Creating announcement with admin client', { campaign_id, title: !!title, body_length: body?.length || 0, image_url: !!image_url, user_id: currentUser.id, role: profile.role });
-    const insertRes = await adminSupabase.from('announcements').insert({ campaign_id, title: title || null, body, created_by: currentUser.id, image_url }).select().single();
+    // Insert both `body` and `content` to be compatible with DBs using either column name.
+    // Insert both `body` and `content` and set both `created_by` and legacy `author_id` for compatibility
+    const insertRes = await adminSupabase.from('announcements').insert({ campaign_id, title: title || null, body, content: body, created_by: currentUser.id, author_id: currentUser.id, image_url }).select().single();
     if (insertRes.error) {
       console.error('Failed to insert announcement:', insertRes.error);
       try {
