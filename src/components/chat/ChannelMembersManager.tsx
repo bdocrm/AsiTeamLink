@@ -179,16 +179,16 @@ export function ChannelMembersManager({ channel, isOpen, onClose }: ChannelMembe
       setAddingMembers(true);
       setError('');
 
-      for (const userId of selectedToAdd) {
-        const { error: err } = await supabase.rpc('add_channel_member', {
-          p_channel_id: channel.id,
-          p_user_id: userId,
-        });
+      // Call the SECURITY DEFINER helper to add all members at once
+      const memberIds = Array.from(selectedToAdd);
+      const { error: err } = await supabase.rpc('add_members_to_channel', {
+        p_channel_id: channel.id,
+        p_member_ids: memberIds,
+      });
 
-        if (err) {
-          setError(err.message);
-          return;
-        }
+      if (err) {
+        setError(err.message);
+        return;
       }
 
       // Refresh members
