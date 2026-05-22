@@ -302,7 +302,7 @@ export function MemberList({ channel }: MemberListProps) {
                 >
                   <div className="relative shrink-0">
                     <div className="w-8 h-8 rounded-full avatar-gradient flex items-center justify-center text-xs font-bold">
-                      {member.name.charAt(0).toUpperCase()}
+                      {((member.name || '') + '').charAt(0).toUpperCase()}
                     </div>
                     <div className="online-dot absolute -bottom-0.5 -right-0.5" />
                     {isViewingChannel && (
@@ -348,7 +348,7 @@ export function MemberList({ channel }: MemberListProps) {
                 <div key={member.id} className="flex items-center gap-2.5 px-2.5 py-2 rounded-xl hover:bg-surface-hover transition-all duration-200">
                   <div className="relative shrink-0 opacity-50">
                     <div className="w-8 h-8 rounded-full bg-surface-hover flex items-center justify-center text-muted font-bold text-xs">
-                      {member.name.charAt(0).toUpperCase()}
+                      {((member.name || '') + '').charAt(0).toUpperCase()}
                     </div>
                     <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-muted/30 rounded-full border-2 border-surface" />
                   </div>

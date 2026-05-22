@@ -389,7 +389,7 @@ export function ChannelMembersManager({ channel, isOpen, onClose }: ChannelMembe
                       className="flex items-center gap-2 px-3 py-2 rounded-lg bg-surface-hover"
                     >
                       <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center text-primary font-semibold text-xs shrink-0">
-                        {(member.user_name || 'U').charAt(0).toUpperCase()}
+                        {((member.user_name || 'U') + '').charAt(0).toUpperCase()}
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="text-sm text-foreground truncate">{member.user_name || 'Unknown'}</p>

@@ -95,7 +95,7 @@ export default function DeletionAuditViewer() {
     return (
       <span className={`px-2 py-1 rounded-full ${color} text-xs font-medium flex items-center gap-1 w-fit`}>
         {getEntityIcon(type)}
-        {type.charAt(0).toUpperCase() + type.slice(1)}
+        {(((type || '') + '').charAt(0) || '').toUpperCase() + ((type || '').slice(1) || '')}
       </span>
     );
   };

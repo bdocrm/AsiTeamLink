@@ -1976,7 +1976,7 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
                                 : 'avatar-secondary'
                             }`}
                           >
-                            {sender?.name?.charAt(0).toUpperCase() || '?'}
+                            {(((sender?.name || '') + '').charAt(0) || '?').toUpperCase()}
                           </div>
                         )}
                       </div>

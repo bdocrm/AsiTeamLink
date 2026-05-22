@@ -107,7 +107,7 @@ export default function FileAuditViewer() {
     return (
       <span className={`px-2 py-1 rounded-full ${color} text-xs font-medium flex items-center gap-1 w-fit`}>
         {getActionIcon(action)}
-        {action.charAt(0).toUpperCase() + action.slice(1)}
+        {(((action || '') + '').charAt(0) || '').toUpperCase() + ((action || '').slice(1) || '')}
       </span>
     );
   };

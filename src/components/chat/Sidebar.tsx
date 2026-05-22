@@ -209,8 +209,8 @@ export function Sidebar({ selectedChannel, onSelectChannel, collapsed, onToggleC
 
         {/* Bottom user avatar */}
         <div className="flex flex-col items-center gap-2">
-          <div className="w-9 h-9 rounded-full avatar-gradient flex items-center justify-center text-sm font-bold">
-            {user?.name?.charAt(0).toUpperCase()}
+            <div className="w-9 h-9 rounded-full avatar-gradient flex items-center justify-center text-sm font-bold">
+            {((user?.name || '?') + '').charAt(0).toUpperCase()}
           </div>
           <button
             onClick={handleLogout}
@@ -358,7 +358,7 @@ export function Sidebar({ selectedChannel, onSelectChannel, collapsed, onToggleC
       <div className="border-t border-border p-3">
         <div className="flex items-center gap-2.5 mb-3 px-1">
           <div className="w-9 h-9 rounded-full avatar-gradient flex items-center justify-center text-sm font-bold shrink-0">
-            {user?.name?.charAt(0).toUpperCase()}
+            {((user?.name || '?') + '').charAt(0).toUpperCase()}
           </div>
           <div className="flex-1 min-w-0">
             <p className="text-sm font-semibold text-foreground truncate">{user?.name}</p>

@@ -562,7 +562,7 @@ export default function AdminPage() {
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-3">
                           <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center text-primary font-semibold text-sm">
-                            {u.name.charAt(0).toUpperCase()}
+                            {((u.name || '') + '').charAt(0).toUpperCase()}
                           </div>
                           <div>
                             <p className="text-sm font-medium text-foreground">{u.name}</p>
