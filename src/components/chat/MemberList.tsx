@@ -64,6 +64,27 @@ export function MemberList({ channel }: MemberListProps) {
           });
           setStatusTimestamps(initialTimestamps);
         }
+      } else {
+        // Fallback: show all users in the system when channel has no members
+        try {
+          const { data: allUsers } = await supabase
+            .from('users')
+            .select('*')
+            .order('name', { ascending: true });
+          if (allUsers) {
+            setMembers(allUsers as any[]);
+            const initialTimestamps: Record<string, { timestamp: number; is_online: boolean }> = {};
+            (allUsers as any[]).forEach((member: any) => {
+              const statusTime = member.is_online 
+                ? (member.last_online_at ? new Date(member.last_online_at).getTime() : Date.now())
+                : (member.last_offline_at ? new Date(member.last_offline_at).getTime() : Date.now());
+              initialTimestamps[member.id] = { timestamp: statusTime, is_online: member.is_online || false };
+            });
+            setStatusTimestamps(initialTimestamps);
+          }
+        } catch (e) {
+          console.warn('Failed to fetch all users fallback:', e);
+        }
       }
     };
 

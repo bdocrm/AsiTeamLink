@@ -43,6 +43,42 @@ export function ChannelMembersManager({ channel, isOpen, onClose }: ChannelMembe
     fetchAvailableMembers();
   }, [isOpen, channel.id]);
 
+  // Presence subscription to enrich members with device/ip info
+  useEffect(() => {
+    if (!isOpen || !user) return;
+
+    const presenceChannel = supabase.channel(`presence:${channel.id}`, {
+      config: { presence: { key: user.id } },
+    });
+
+    presenceChannel
+      .on('presence', { event: 'sync' }, () => {
+        try {
+          const state = presenceChannel.presenceState();
+          setMembers(prev => prev.map(m => {
+            const pres = state[m.user_id]?.[0] as any;
+            if (!pres) return m;
+            return {
+              ...m,
+              // merge presence fields when available
+              devicePlatform: pres.devicePlatform || (m as any).devicePlatform,
+              ip: pres.ip || (m as any).ip,
+              // mark member as online if present
+              is_online: true,
+            } as ChannelMember & any;
+          }));
+        } catch (e) {
+          // ignore
+        }
+      })
+      .subscribe();
+
+    return () => {
+      try { presenceChannel.untrack(); } catch (e) {}
+      supabase.removeChannel(presenceChannel);
+    };
+  }, [isOpen, channel.id, user]);
+
   const fetchMembers = async () => {
     try {
       setLoading(true);
@@ -55,7 +91,34 @@ export function ChannelMembersManager({ channel, isOpen, onClose }: ChannelMembe
         return;
       }
 
-      setMembers(data as ChannelMember[]);
+      const membersRes = (data as ChannelMember[]) || [];
+
+      if (membersRes.length === 0) {
+        // If no channel members, show all users in the system as a fallback
+        try {
+          const { data: usersData, error: usersErr } = await supabase
+            .from('users')
+            .select('id, name, email, role, is_online, last_online_at, last_offline_at, created_at')
+            .order('name', { ascending: true });
+
+          if (!usersErr && usersData) {
+            const fallback: ChannelMember[] = (usersData as any[]).map(u => ({
+              user_id: u.id,
+              user_name: u.name || u.email || 'Unknown',
+              user_role: u.role || 'agent',
+              member_role: 'member',
+              joined_at: u.created_at || new Date().toISOString(),
+            }));
+            setMembers(fallback);
+          } else {
+            setMembers(membersRes);
+          }
+        } catch (e: any) {
+          setMembers(membersRes);
+        }
+      } else {
+        setMembers(membersRes);
+      }
     } catch (err: any) {
       setError(err.message || 'Failed to fetch members');
     } finally {
@@ -305,16 +368,23 @@ export function ChannelMembersManager({ channel, isOpen, onClose }: ChannelMembe
                       className="flex items-center gap-2 px-3 py-2 rounded-lg bg-surface-hover"
                     >
                       <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center text-primary font-semibold text-xs shrink-0">
-                        {member.user_name.charAt(0).toUpperCase()}
+                        {(member.user_name || 'U').charAt(0).toUpperCase()}
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm text-foreground truncate">{member.user_name}</p>
+                        <p className="text-sm text-foreground truncate">{member.user_name || 'Unknown'}</p>
                         <div className="flex items-center gap-1.5">
                           <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium w-fit ${badge.style}`}>
                             {badge.label}
                           </span>
                           <span className="text-[10px] text-muted">{joinedDate}</span>
                         </div>
+                        {/* Device / IP info (from presence state) */}
+                        {(member as any).devicePlatform && (
+                          <div className="text-[11px] text-muted mt-1 truncate">
+                            <span className="mr-2">{(member as any).devicePlatform}</span>
+                            {((member as any).ip) && <span className="ml-1">· {(member as any).ip}</span>}
+                          </div>
+                        )}
                       </div>
                       {canRemove && (
                         <button
