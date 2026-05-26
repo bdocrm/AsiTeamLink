@@ -215,6 +215,7 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
   const [announcementsHasMore, setAnnouncementsHasMore] = useState(false);
   const [announcementsOffset, setAnnouncementsOffset] = useState(0);
   const [announcementScopeFilter, setAnnouncementScopeFilter] = useState<'all' | 'campaign' | 'channel'>('all');
+  const [announcementImagePreview, setAnnouncementImagePreview] = useState<{ url: string; title?: string | null } | null>(null);
   const [showCreateAnnouncementModal, setShowCreateAnnouncementModal] = useState(false);
   const [channelAnnouncementCount, setChannelAnnouncementCount] = useState<number | null>(null);
   const [duplicateFileConfirm, setDuplicateFileConfirm] = useState<{ show: boolean; fileName: string; file: File | null }>({ show: false, fileName: '', file: null });
@@ -2566,8 +2567,19 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
                 .map((a) => (
                 <div key={a.id} className="mb-4 px-3 py-3 bg-surface border border-border rounded-xl">
                   {a.image_url && (
-                    <div className="mb-3">
-                      <img src={a.image_url} alt={a.title || 'Announcement image'} className="w-full max-h-44 object-contain rounded-md bg-surface-hover" />
+                    <div className="mb-3 flex justify-center">
+                      <button
+                        type="button"
+                        onClick={() => setAnnouncementImagePreview({ url: a.image_url as string, title: a.title })}
+                        className="inline-block"
+                        title="Click to view full image"
+                      >
+                        <img
+                          src={a.image_url}
+                          alt={a.title || 'Announcement image'}
+                          className="max-w-full h-auto rounded-md bg-surface-hover cursor-zoom-in"
+                        />
+                      </button>
                     </div>
                   )}
                   {a.title && <div className="font-semibold text-foreground mb-1">{a.title}</div>}
@@ -3442,6 +3454,32 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
             } catch (e) { console.error(e); }
           }}
         />
+      )}
+
+      {announcementImagePreview && (
+        <div
+          className="fixed inset-0 z-[80] bg-black/80 p-4 flex items-center justify-center"
+          onClick={() => setAnnouncementImagePreview(null)}
+        >
+          <button
+            type="button"
+            className="absolute top-4 right-4 p-2 rounded-lg text-white/90 hover:text-white hover:bg-white/10"
+            onClick={() => setAnnouncementImagePreview(null)}
+            title="Close"
+          >
+            <X className="w-5 h-5" />
+          </button>
+          <div
+            className="max-w-[95vw] max-h-[90vh] overflow-auto rounded-lg"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <img
+              src={announcementImagePreview.url}
+              alt={announcementImagePreview.title || 'Announcement image'}
+              className="block w-auto h-auto max-w-none"
+            />
+          </div>
+        </div>
       )}
     </div>
   );
