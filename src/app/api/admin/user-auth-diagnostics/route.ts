@@ -130,11 +130,12 @@ export async function GET(request: NextRequest) {
       .maybeSingle();
 
     let lastAdminActorEmail: string | null = null;
-    if (isUuid(lastAdminActionRow?.user_id)) {
+    const actorUserId = lastAdminActionRow?.user_id || null;
+    if (actorUserId && isUuid(actorUserId)) {
       const { data: actorProfile } = await adminSupabase
         .from('users')
         .select('email')
-        .eq('id', lastAdminActionRow.user_id)
+        .eq('id', actorUserId)
         .maybeSingle();
       lastAdminActorEmail = actorProfile?.email || null;
     }
