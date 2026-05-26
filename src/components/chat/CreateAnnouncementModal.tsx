@@ -78,13 +78,13 @@ export function CreateAnnouncementModal({ isOpen, campaignId, initialChannelId, 
           setChannels([]);
           return;
         }
-        const list = (data || []).map((c: { id: string; name: string }) => ({ id: c.id, name: c.name }));
+        const list: { id: string; name: string }[] = (data || []).map((c: { id: string; name: string }) => ({ id: c.id, name: c.name }));
         setChannels(list);
         if (list.length > 0) {
           setSelectedChannelId((prev) => {
             if (prev === '__all__') return '__all__';
-            if (prev && list.some((c) => c.id === prev)) return prev;
-            if (initialChannelId && list.some((c) => c.id === initialChannelId)) return initialChannelId;
+            if (prev && list.some((c: { id: string; name: string }) => c.id === prev)) return prev;
+            if (initialChannelId && list.some((c: { id: string; name: string }) => c.id === initialChannelId)) return initialChannelId;
             return '__all__';
           });
         }
