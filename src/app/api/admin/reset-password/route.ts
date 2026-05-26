@@ -43,9 +43,12 @@ export async function POST(request: NextRequest) {
 
     // Use admin client to generate recovery link
     const adminSupabase = createAdminClient();
-    // Use the app URL from env for production, or detect from request for local development
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 
-                   (process.env.NODE_ENV === 'production' ? 'https://asi-team-link.vercel.app' : 'http://localhost:3000');
+    // Prefer configured app URL, but ignore localhost values in production-like environments.
+    const envAppUrl = (process.env.NEXT_PUBLIC_APP_URL || '').trim().replace(/\/$/, '');
+    const envLooksLocal = /localhost|127\.0\.0\.1/i.test(envAppUrl);
+    const appUrl = envAppUrl && !envLooksLocal
+      ? envAppUrl
+      : request.nextUrl.origin.replace(/\/$/, '');
     
     const { data, error } = await adminSupabase.auth.admin.generateLink({
       type: 'recovery',

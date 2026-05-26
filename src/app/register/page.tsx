@@ -49,8 +49,9 @@ export default function RegisterPage() {
             <CheckCircle className="w-16 h-16 text-success mx-auto mb-4" />
             <h2 className="text-2xl font-bold text-foreground mb-2">Registration Successful!</h2>
             <p className="text-muted mb-6">
-              Your account has been created and is pending approval from the administrator.
-              You will be able to log in once your account is approved.
+              Your account has been created.
+              Please confirm your email first, then wait for approval from the administrator.
+              You will be able to log in after both steps are completed.
             </p>
             <Link
               href="/login"

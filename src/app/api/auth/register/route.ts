@@ -17,6 +17,11 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Password must be at least 6 characters.' }, { status: 400 });
     }
 
+    const requestOrigin = new URL(req.url).origin.replace(/\/$/, '');
+    const envAppUrl = (process.env.NEXT_PUBLIC_APP_URL || '').trim().replace(/\/$/, '');
+    const envLooksLocal = /localhost|127\.0\.0\.1/i.test(envAppUrl);
+    const appUrl = envAppUrl && !envLooksLocal ? envAppUrl : requestOrigin;
+
     const adminSupabase = createAdminClient();
     const { data: existingRows, error: existingErr } = await adminSupabase
       .from('users')
@@ -48,7 +53,7 @@ export async function POST(req: Request) {
       email,
       password,
       options: {
-        emailRedirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/api/auth/callback`,
+        emailRedirectTo: `${appUrl}/api/auth/callback`,
         data: { name },
       },
     });
@@ -74,32 +79,8 @@ export async function POST(req: Request) {
             console.warn('public.users insert exception:', e);
           }
 
-          // Try to generate a verification link via admin API and email via send-confirmation
-          try {
-            const { data: linkData, error: linkErr } = await adminSupabase.auth.admin.generateLink({
-              type: 'signup',
-              email,
-              options: { redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/api/auth/callback` },
-            } as any);
-
-            const verificationLink = linkData?.properties?.action_link;
-            if (verificationLink) {
-              // Fire-and-forget call to internal send-confirmation route
-              try {
-                await fetch(`${process.env.NEXT_PUBLIC_APP_URL}/api/send-confirmation`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ userId, verificationLink, firstName: name }),
-                });
-              } catch (e) {
-                console.warn('Failed to call send-confirmation:', e);
-              }
-            } else if (linkErr) {
-              console.warn('generateLink error (signup):', linkErr);
-            }
-          } catch (e) {
-            console.warn('generateLink exception (signup):', e);
-          }
+          // Do not send custom confirmation here: signUp already sends a confirmation email.
+          // Keeping both causes duplicate confirmation emails.
         }
       }
     } catch (err) {

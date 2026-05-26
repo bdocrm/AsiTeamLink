@@ -247,7 +247,9 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: authErr?.message || 'Auth user/email not found' }, { status: 500 });
       }
 
-      const appUrl = process.env.NEXT_PUBLIC_APP_URL || request.nextUrl.origin;
+      const envAppUrl = (process.env.NEXT_PUBLIC_APP_URL || '').trim().replace(/\/$/, '');
+      const envLooksLocal = /localhost|127\.0\.0\.1/i.test(envAppUrl);
+      const appUrl = envAppUrl && !envLooksLocal ? envAppUrl : request.nextUrl.origin.replace(/\/$/, '');
       const { data: linkData, error: linkErr } = await adminSupabase.auth.admin.generateLink({
         type: 'signup',
         email: authUser.email,
