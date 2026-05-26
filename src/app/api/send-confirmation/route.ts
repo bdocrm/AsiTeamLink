@@ -46,10 +46,11 @@ export async function POST(request: NextRequest) {
     const host = process.env.SMTP_HOST;
     const port = process.env.SMTP_PORT ? Number(process.env.SMTP_PORT) : undefined;
     const secure = process.env.SMTP_SECURE === 'true';
-    const userEnv = process.env.SMTP_USER;
-    const passEnv = process.env.SMTP_PASS;
+    // Support both env naming styles used in this project.
+    const userEnv = process.env.SMTP_USERNAME || process.env.SMTP_USER;
+    const passEnv = process.env.SMTP_PASSWORD || process.env.SMTP_PASS;
     const fromName = process.env.SMTP_FROM_NAME || 'No Reply';
-    const fromEmail = process.env.SMTP_FROM_EMAIL || process.env.SMTP_USER;
+    const fromEmail = process.env.SMTP_FROM_EMAIL || process.env.SMTP_USERNAME || process.env.SMTP_USER;
 
     if (!host || !port || !userEnv || !passEnv || !fromEmail) {
       return NextResponse.json({ error: 'Missing SMTP configuration' }, { status: 500 });
@@ -73,19 +74,34 @@ export async function POST(request: NextRequest) {
     const from = `${fromName} <${fromEmail}>`;
 
     // Send email
-    const info = await transporter.sendMail({
-      from,
-      to: user.email as string,
-      subject: mail.subject,
-      text: mail.text,
-      html: mail.html,
-    });
+    let info: any = null;
+    try {
+      info = await transporter.sendMail({
+        from,
+        to: user.email as string,
+        subject: mail.subject,
+        text: mail.text,
+        html: mail.html,
+      });
+    } catch (sendErr: any) {
+      console.error('SMTP send error:', sendErr);
+      // Return detailed error to help debugging (temporary)
+      return NextResponse.json({ error: 'SMTP send failed', details: sendErr?.message || String(sendErr) }, { status: 500 });
+    }
 
-    // Update verification_sent_at
+    // Basic success check: nodemailer returns 'accepted' array on success
+    const accepted = info?.accepted || [];
+    const rejected = info?.rejected || [];
+    if (!accepted || accepted.length === 0) {
+      console.warn('SMTP send reported no accepted recipients', { accepted, rejected, info });
+      return NextResponse.json({ error: 'SMTP reported failure', accepted, rejected, info }, { status: 500 });
+    }
+
+    // Update verification_sent_at on success
     const { error: updErr } = await serverSupabase.from('users').update({ verification_sent_at: new Date().toISOString() }).eq('id', userId);
     if (updErr) console.warn('Failed to update verification_sent_at', updErr);
 
-    return NextResponse.json({ success: true, info });
+    return NextResponse.json({ success: true, info, accepted, rejected });
   } catch (err: any) {
     console.error('send-confirmation route error', err);
     return NextResponse.json({ error: err?.message || String(err) }, { status: 500 });

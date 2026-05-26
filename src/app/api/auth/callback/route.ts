@@ -70,8 +70,11 @@ export async function GET(request: NextRequest) {
 
       if (data.session) {
         console.log('✓ Session created successfully');
-        // Redirect to password reset page since this is a recovery link
-        return NextResponse.redirect(new URL('/reset-password', request.nextUrl.origin));
+        // If this is a recovery link, redirect to password reset, otherwise go to login
+        const typeParam = searchParams.get('type') || searchParams.get('action') || '';
+        const isRecovery = typeof typeParam === 'string' && typeParam.toLowerCase().includes('recovery');
+        const destination = isRecovery ? '/reset-password' : '/login';
+        return NextResponse.redirect(new URL(destination, request.nextUrl.origin));
       }
     } catch (err: any) {
       console.error('Exchange exception:', err);

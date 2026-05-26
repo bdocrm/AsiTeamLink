@@ -19,6 +19,7 @@ import {
   Trash2,
   Lock,
   KeyRound,
+  Activity,
 } from 'lucide-react';
 import type { User, Campaign, UserRole } from '@/lib/types';
 
@@ -32,6 +33,63 @@ interface PasswordResetRequest {
   user_email?: string;
 }
 
+interface UserHealthData {
+  auth: {
+    id: string;
+    email: string | null;
+    email_confirmed_at: string | null;
+    last_sign_in_at: string | null;
+    created_at: string | null;
+    banned_until: string | null;
+    deleted_at: string | null;
+  };
+  public: {
+    id: string;
+    email: string;
+    name: string;
+    role: UserRole;
+    status: 'pending' | 'approved' | 'rejected';
+    campaign_id: string | null;
+    mfa_enabled: boolean;
+    mfa_method: string;
+    created_at: string;
+    updated_at?: string;
+    verification_sent_at?: string | null;
+    last_online_at?: string | null;
+    last_offline_at?: string | null;
+    muted_until?: string | null;
+    muted_reason?: string | null;
+  } | null;
+  checks: {
+    has_public_profile: boolean;
+    email_matches: boolean;
+    is_approved: boolean;
+    is_email_confirmed: boolean;
+    is_banned: boolean;
+    has_active_session: boolean;
+  };
+  reset_request_latest: {
+    id: string;
+    status: 'pending' | 'completed' | 'rejected';
+    requested_at: string;
+    resolved_at?: string | null;
+  } | null;
+  active_session_count: number;
+  last_admin_action: {
+    actor_user_id: string | null;
+    actor_email: string | null;
+    reason: string | null;
+    success: boolean;
+    created_at: string | null;
+  } | null;
+}
+
+interface ServerMonitorData {
+  db: { ok: boolean; latency_ms: number | null };
+  storage: { bytes: number | null; scanned_objects: number; is_estimate: boolean; note?: string | null };
+  generated_at?: string;
+}
+
 export default function AdminPage() {
   const { user } = useAuth();
   const router = useRouter();
@@ -39,6 +97,7 @@ export default function AdminPage() {
 
   const [tab, setTab] = useState<'users' | 'campaigns' | 'password-reset'>('users');
   const [users, setUsers] = useState<User[]>([]);
+  const [mutedUsers, setMutedUsers] = useState<Record<string, { muted_until: string | null; muted_reason: string | null }>>({});
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [passwordResetRequests, setPasswordResetRequests] = useState<PasswordResetRequest[]>([]);
   const [newCampaignName, setNewCampaignName] = useState('');
@@ -78,6 +137,16 @@ export default function AdminPage() {
     message?: string;
   }>({ isOpen: false, userId: '', userName: '', userEmail: '', isLoading: false });
 
+  const [healthModal, setHealthModal] = useState<{
+    isOpen: boolean;
+    userId: string;
+    userName: string;
+    userEmail: string;
+    isLoading: boolean;
+    error?: string;
+    data?: UserHealthData;
+  }>({ isOpen: false, userId: '', userName: '', userEmail: '', isLoading: false });
+
   // Role change modal state
   const [roleChangeModal, setRoleChangeModal] = useState<{
     isOpen: boolean;
@@ -106,10 +175,48 @@ export default function AdminPage() {
     fetchUsers();
     fetchCampaigns();
     fetchPasswordResetRequests();
+    fetchServerMonitor();
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      fetchServerMonitor();
+    }, 30000);
+    return () => clearInterval(timer);
   }, []);
   
   const [channelListModal, setChannelListModal] = useState<{ isOpen: boolean; campaignId: string; channels: any[]; isLoading: boolean; message?: string }>({ isOpen: false, campaignId: '', channels: [], isLoading: false });
+  const [channelPostingModeSaving, setChannelPostingModeSaving] = useState<Record<string, boolean>>({});
+  const [serverMonitor, setServerMonitor] = useState<ServerMonitorData | null>(null);
+  const [serverMonitorLoading, setServerMonitorLoading] = useState(false);
+  const [serverMonitorError, setServerMonitorError] = useState('');
+
+  const formatBytes = (bytes: number | null) => {
+    if (bytes === null) return 'N/A';
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+    return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+  };
+
+  const fetchServerMonitor = async () => {
+    try {
+      setServerMonitorLoading(true);
+      setServerMonitorError('');
+      const res = await fetch('/api/admin/server-monitor', { cache: 'no-store' });
+      const data = await res.json();
+      if (!res.ok) {
+        setServerMonitorError(data?.error || 'Failed to load server monitor');
+        return;
+      }
+      setServerMonitor(data as ServerMonitorData);
+    } catch (e: any) {
+      setServerMonitorError(e?.message || 'Failed to load server monitor');
+    } finally {
+      setServerMonitorLoading(false);
+    }
+  };
 
   const openChannelListModal = async (campaignId: string) => {
     setChannelListModal({ isOpen: true, campaignId, channels: [], isLoading: true });
@@ -131,9 +238,59 @@ export default function AdminPage() {
     setChannelListModal({ isOpen: false, campaignId: '', channels: [], isLoading: false });
   };
 
+  const handleUpdateChannelPostingMode = async (channelId: string, postingMode: 'all' | 'leaders_only' | 'admin_only') => {
+    try {
+      setChannelPostingModeSaving(prev => ({ ...prev, [channelId]: true }));
+      const res = await fetch('/api/admin/update-channel-posting-mode', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ channelId, postingMode }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        alert('Failed to update posting mode: ' + (data.error || ''));
+        return;
+      }
+      try { window.dispatchEvent(new CustomEvent('channelsUpdated')); } catch {}
+      setChannelListModal(prev => ({
+        ...prev,
+        channels: prev.channels.map((c) => (c.id === channelId ? { ...c, posting_mode: postingMode } : c)),
+      }));
+    } catch (err) {
+      console.error('Failed to update channel posting mode:', err);
+      alert('Failed to update posting mode');
+    } finally {
+      setChannelPostingModeSaving(prev => ({ ...prev, [channelId]: false }));
+    }
+  };
+
+  const getPostingModeBadge = (mode?: 'all' | 'leaders_only' | 'admin_only') => {
+    if (mode === 'leaders_only') {
+      return { label: 'Leaders', className: 'bg-warning/10 text-warning border-warning/20' };
+    }
+    if (mode === 'admin_only') {
+      return { label: 'Admin', className: 'bg-danger/10 text-danger border-danger/20' };
+    }
+    return { label: 'All', className: 'bg-success/10 text-success border-success/20' };
+  };
+
   const fetchUsers = async () => {
     const { data } = await supabase.rpc('get_all_users');
     if (data) setUsers(data);
+    try {
+      const { data: muteData } = await supabase
+        .from('users')
+        .select('id, muted_until, muted_reason');
+      if (muteData) {
+        const map: Record<string, { muted_until: string | null; muted_reason: string | null }> = {};
+        (muteData as { id: string; muted_until: string | null; muted_reason: string | null }[]).forEach((r) => {
+          map[r.id] = { muted_until: r.muted_until, muted_reason: r.muted_reason };
+        });
+        setMutedUsers(map);
+      }
+    } catch (e) {
+      // ignore optional mute fetch errors
+    }
   };
 
   const fetchCampaigns = async () => {
@@ -180,9 +337,15 @@ export default function AdminPage() {
 
   const handleApprove = async (userId: string) => {
     try {
-      const res = await supabase.from('users').update({ status: 'approved' }).eq('id', userId);
-      if (res.error) console.error('Supabase update error (users.status=approved):', res.error);
-      else console.log('Supabase update success (users.status=approved):', res.data);
+      const res = await fetch('/api/admin/approve-user', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId }),
+      });
+      const result = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        console.error('Approve user error:', result?.error || res.statusText, result?.details || '');
+      }
     } catch (err) {
       console.error('Unhandled error approving user:', err);
     }
@@ -275,6 +438,30 @@ export default function AdminPage() {
       passwordConfirm: '',
       isLoading: false,
     });
+  };
+
+  const handleDeleteUser = async (targetUser: User) => {
+    if (!confirm(`Delete user "${targetUser.name}" (${targetUser.email})? This is permanent.`)) return;
+    try {
+      const res = await fetch('/api/admin/delete-user', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: targetUser.id }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const details = j?.details ? ` (${Object.values(j.details).filter(Boolean).join(' | ')})` : '';
+        alert('Failed to delete user: ' + (j?.error || res.statusText) + details);
+        return;
+      }
+      if (j?.mode === 'soft') {
+        alert('User deleted using soft-delete fallback (Auth protected delete fallback).');
+      }
+      fetchUsers();
+    } catch (err: any) {
+      console.error('Unhandled error deleting user:', err);
+      alert('Failed to delete user');
+    }
   };
 
   const openResetPasswordModal = (request: PasswordResetRequest) => {
@@ -382,6 +569,64 @@ export default function AdminPage() {
     if (!setPasswordModal.isLoading) setSetPasswordModal({ isOpen: false, userId: '', userName: '', userEmail: '', isLoading: false });
   };
 
+  const openUserHealthModal = async (u: User) => {
+    setHealthModal({
+      isOpen: true,
+      userId: u.id,
+      userName: u.name,
+      userEmail: u.email,
+      isLoading: true,
+      error: undefined,
+      data: undefined,
+    });
+    try {
+      const res = await fetch(`/api/admin/user-auth-diagnostics?userId=${encodeURIComponent(u.id)}`);
+      const result = await res.json();
+      if (!res.ok) {
+        setHealthModal(prev => ({ ...prev, isLoading: false, error: result.error || 'Failed to load user health' }));
+        return;
+      }
+      setHealthModal(prev => ({ ...prev, isLoading: false, data: result.health as UserHealthData }));
+    } catch (err: any) {
+      setHealthModal(prev => ({ ...prev, isLoading: false, error: err?.message || 'Failed to load user health' }));
+    }
+  };
+
+  const reloadUserHealth = async (userId: string) => {
+    const res = await fetch(`/api/admin/user-auth-diagnostics?userId=${encodeURIComponent(userId)}`);
+    const result = await res.json();
+    if (!res.ok) throw new Error(result.error || 'Failed to reload user health');
+    return result.health as UserHealthData;
+  };
+
+  const runHealthAction = async (action: 'confirm_email' | 'approve_and_confirm' | 'force_signout_all' | 'resend_confirmation' | 'timeout_30m' | 'timeout_2h' | 'timeout_24h' | 'unmute_user') => {
+    if (!healthModal.userId) return;
+    setHealthModal(prev => ({ ...prev, isLoading: true, error: undefined }));
+    try {
+      const res = await fetch('/api/admin/user-auth-diagnostics', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, userId: healthModal.userId }),
+      });
+      const result = await res.json();
+      if (!res.ok) {
+        setHealthModal(prev => ({ ...prev, isLoading: false, error: result.error || 'Action failed' }));
+        return;
+      }
+      const data = await reloadUserHealth(healthModal.userId);
+      setHealthModal(prev => ({ ...prev, isLoading: false, data }));
+      fetchUsers();
+    } catch (err: any) {
+      setHealthModal(prev => ({ ...prev, isLoading: false, error: err?.message || 'Action failed' }));
+    }
+  };
+
+  const closeHealthModal = () => {
+    if (!healthModal.isLoading) {
+      setHealthModal({ isOpen: false, userId: '', userName: '', userEmail: '', isLoading: false });
+    }
+  };
+
   const handleCreateCampaign = async () => {
     if (!newCampaignName.trim()) return;
     try {
@@ -474,6 +719,41 @@ export default function AdminPage() {
       </div>
 
       <div className="max-w-6xl mx-auto px-6 py-6">
+        <div className="mb-6 grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="bg-surface border border-border rounded-xl p-4">
+            <div className="flex items-center justify-between mb-1">
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted">Server Speed</p>
+              <Activity className="w-4 h-4 text-primary" />
+            </div>
+            <p className="text-2xl font-bold text-foreground">
+              {serverMonitorLoading && !serverMonitor ? '...' : `${serverMonitor?.db?.latency_ms ?? 'N/A'} ms`}
+            </p>
+            <p className="text-xs text-muted mt-1">
+              {serverMonitor?.db?.ok ? 'Database probe healthy' : 'Database probe unavailable'}
+            </p>
+          </div>
+
+          <div className="bg-surface border border-border rounded-xl p-4">
+            <div className="flex items-center justify-between mb-1">
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted">Supabase Storage</p>
+              <Building2 className="w-4 h-4 text-primary" />
+            </div>
+            <p className="text-2xl font-bold text-foreground">
+              {serverMonitorLoading && !serverMonitor ? '...' : formatBytes(serverMonitor?.storage?.bytes ?? null)}
+            </p>
+            <p className="text-xs text-muted mt-1">
+              Scanned objects: {serverMonitor?.storage?.scanned_objects ?? 0}
+              {serverMonitor?.storage?.is_estimate ? ' (estimate)' : ''}
+            </p>
+            {serverMonitor?.storage?.note && (
+              <p className="text-xs text-warning mt-1">{serverMonitor.storage.note}</p>
+            )}
+            {serverMonitorError && (
+              <p className="text-xs text-danger mt-1">{serverMonitorError}</p>
+            )}
+          </div>
+        </div>
+
         {/* Tabs */}
         <div className="flex gap-2 mb-6">
           <button
@@ -578,6 +858,17 @@ export default function AdminPage() {
                         }`}>
                           {u.status}
                         </span>
+                        {(() => {
+                          const muted = mutedUsers[u.id];
+                          if (!muted?.muted_until) return null;
+                          const untilMs = new Date(muted.muted_until).getTime();
+                          if (Number.isNaN(untilMs) || untilMs <= Date.now()) return null;
+                          return (
+                            <span className="ml-2 text-xs px-2 py-1 rounded-full font-medium bg-danger/10 text-danger">
+                              Muted
+                            </span>
+                          );
+                        })()}
                       </td>
                       <td className="px-4 py-3">
                         {u.id === user.id ? (
@@ -637,13 +928,49 @@ export default function AdminPage() {
                           </button>
                         )}
                         {u.status === 'approved' && (
-                          <button
-                            onClick={() => handleResetPassword(u.id, u.email)}
-                            className="p-1.5 bg-primary/10 text-primary hover:bg-primary/20 rounded-lg transition-colors"
-                            title="Reset Password"
-                          >
-                            <Lock className="w-4 h-4" />
-                          </button>
+                          <div className="flex items-center justify-end gap-1">
+                            <button
+                              onClick={() => openUserHealthModal(u)}
+                              className="p-1.5 bg-secondary/10 text-secondary hover:bg-secondary/20 rounded-lg transition-colors"
+                              title="User Health"
+                            >
+                              <Activity className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={() => handleResetPassword(u.id, u.email)}
+                              className="p-1.5 bg-primary/10 text-primary hover:bg-primary/20 rounded-lg transition-colors"
+                              title="Reset Password"
+                            >
+                              <Lock className="w-4 h-4" />
+                            </button>
+                            {u.id !== user.id && (
+                              <button
+                                onClick={() => handleDeleteUser(u)}
+                                className="p-1.5 bg-danger/10 text-danger hover:bg-danger/20 rounded-lg transition-colors"
+                                title="Delete User"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            )}
+                          </div>
+                        )}
+                        {u.status !== 'approved' && u.id !== user.id && (
+                          <div className="flex items-center justify-end gap-1">
+                            <button
+                              onClick={() => openUserHealthModal(u)}
+                              className="p-1.5 bg-secondary/10 text-secondary hover:bg-secondary/20 rounded-lg transition-colors"
+                              title="User Health"
+                            >
+                              <Activity className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={() => handleDeleteUser(u)}
+                              className="p-1.5 bg-danger/10 text-danger hover:bg-danger/20 rounded-lg transition-colors"
+                              title="Delete User"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
                         )}
                       </td>
                     </tr>
@@ -873,6 +1200,112 @@ export default function AdminPage() {
       )}
 
       {/* Set/Change Password Modal (direct) */}
+      {healthModal.isOpen && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-surface border border-border rounded-xl shadow-xl max-w-lg w-full animate-in zoom-in-95 duration-200">
+            <div className="border-b border-border px-6 py-4 flex items-center gap-3">
+              <div className="w-10 h-10 rounded-lg bg-secondary/10 flex items-center justify-center">
+                <Activity className="w-5 h-5 text-secondary" />
+              </div>
+              <h2 className="text-lg font-semibold text-foreground">User Health</h2>
+            </div>
+            <div className="px-6 py-6">
+              <p className="text-sm text-muted mb-4">{healthModal.userName} ({healthModal.userEmail})</p>
+              {healthModal.isLoading && <p className="text-sm text-muted">Loading health data...</p>}
+              {healthModal.error && <p className="text-sm text-danger">{healthModal.error}</p>}
+              {healthModal.data && (
+                <div className="space-y-2 text-sm">
+                  <p><strong>Auth Email Confirmed:</strong> {healthModal.data.checks.is_email_confirmed ? 'Yes' : 'No'}</p>
+                  <p><strong>Public Status Approved:</strong> {healthModal.data.checks.is_approved ? 'Yes' : 'No'}</p>
+                  <p><strong>Email Match (Auth/Public):</strong> {healthModal.data.checks.email_matches ? 'Yes' : 'No'}</p>
+                  <p><strong>Has Public Profile:</strong> {healthModal.data.checks.has_public_profile ? 'Yes' : 'No'}</p>
+                  <p><strong>Banned:</strong> {healthModal.data.checks.is_banned ? 'Yes' : 'No'}</p>
+                  <p><strong>Active Sessions:</strong> {healthModal.data.active_session_count}</p>
+                  <p><strong>Last Sign In:</strong> {healthModal.data.auth.last_sign_in_at || 'Never'}</p>
+                  <p><strong>Auth Confirmed At:</strong> {healthModal.data.auth.email_confirmed_at || 'Not confirmed'}</p>
+                  <p><strong>Muted Until:</strong> {healthModal.data.public?.muted_until || 'Not muted'}</p>
+                  <p><strong>Mute Reason:</strong> {healthModal.data.public?.muted_reason || 'N/A'}</p>
+                  <p><strong>Latest Reset Request:</strong> {healthModal.data.reset_request_latest ? `${healthModal.data.reset_request_latest.status} (${healthModal.data.reset_request_latest.requested_at})` : 'None'}</p>
+                  <p>
+                    <strong>Last Admin Action:</strong>{' '}
+                    {healthModal.data.last_admin_action
+                      ? `${healthModal.data.last_admin_action.reason || 'n/a'} by ${healthModal.data.last_admin_action.actor_email || healthModal.data.last_admin_action.actor_user_id || 'unknown'} (${healthModal.data.last_admin_action.created_at || 'n/a'})`
+                      : 'None'}
+                  </p>
+                  <div className="pt-3 flex flex-wrap gap-2">
+                    <button
+                      onClick={() => runHealthAction('confirm_email')}
+                      disabled={healthModal.isLoading}
+                      className="px-3 py-1.5 bg-primary/10 text-primary hover:bg-primary/20 rounded-lg text-xs font-medium disabled:opacity-50"
+                    >
+                      Confirm Auth Email
+                    </button>
+                    <button
+                      onClick={() => runHealthAction('approve_and_confirm')}
+                      disabled={healthModal.isLoading}
+                      className="px-3 py-1.5 bg-success/10 text-success hover:bg-success/20 rounded-lg text-xs font-medium disabled:opacity-50"
+                    >
+                      Approve + Confirm
+                    </button>
+                    <button
+                      onClick={() => runHealthAction('force_signout_all')}
+                      disabled={healthModal.isLoading}
+                      className="px-3 py-1.5 bg-warning/10 text-warning hover:bg-warning/20 rounded-lg text-xs font-medium disabled:opacity-50"
+                    >
+                      Force Sign Out All
+                    </button>
+                    <button
+                      onClick={() => runHealthAction('resend_confirmation')}
+                      disabled={healthModal.isLoading}
+                      className="px-3 py-1.5 bg-secondary/10 text-secondary hover:bg-secondary/20 rounded-lg text-xs font-medium disabled:opacity-50"
+                    >
+                      Resend Confirmation Email
+                    </button>
+                    <button
+                      onClick={() => runHealthAction('timeout_30m')}
+                      disabled={healthModal.isLoading}
+                      className="px-3 py-1.5 bg-danger/10 text-danger hover:bg-danger/20 rounded-lg text-xs font-medium disabled:opacity-50"
+                    >
+                      Timeout 30m
+                    </button>
+                    <button
+                      onClick={() => runHealthAction('timeout_2h')}
+                      disabled={healthModal.isLoading}
+                      className="px-3 py-1.5 bg-danger/10 text-danger hover:bg-danger/20 rounded-lg text-xs font-medium disabled:opacity-50"
+                    >
+                      Timeout 2h
+                    </button>
+                    <button
+                      onClick={() => runHealthAction('timeout_24h')}
+                      disabled={healthModal.isLoading}
+                      className="px-3 py-1.5 bg-danger/10 text-danger hover:bg-danger/20 rounded-lg text-xs font-medium disabled:opacity-50"
+                    >
+                      Timeout 24h
+                    </button>
+                    <button
+                      onClick={() => runHealthAction('unmute_user')}
+                      disabled={healthModal.isLoading}
+                      className="px-3 py-1.5 bg-success/10 text-success hover:bg-success/20 rounded-lg text-xs font-medium disabled:opacity-50"
+                    >
+                      Unmute
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+            <div className="border-t border-border px-6 py-4 flex gap-2 justify-end">
+              <button
+                onClick={closeHealthModal}
+                className="px-4 py-2 text-white bg-primary hover:bg-primary-hover rounded-lg text-sm font-medium transition-colors w-full"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Set/Change Password Modal (direct) */}
       {setPasswordModal.isOpen && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-surface border border-border rounded-xl shadow-xl max-w-sm w-full animate-in zoom-in-95 duration-200">
@@ -1036,10 +1469,41 @@ export default function AdminPage() {
               {!channelListModal.isLoading && channelListModal.channels.length > 0 && (
                 <div className="space-y-2">
                   {channelListModal.channels.map(ch => (
-                    <div key={ch.id} className="flex items-center justify-between p-2 border border-border rounded-lg">
-                      <div>
-                        <p className="font-medium text-foreground">{ch.name}</p>
-                        <p className="text-xs text-muted">{ch.id}</p>
+                    (() => {
+                      const postingBadge = getPostingModeBadge(ch.posting_mode);
+                      return (
+                    <div key={ch.id} className="flex items-center justify-between p-2 border border-border rounded-lg gap-3">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <p className="font-medium text-foreground">{ch.name}</p>
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] border ${postingBadge.className}`}>
+                            {postingBadge.label}
+                          </span>
+                        </div>
+                        <p className="text-xs text-muted truncate">{ch.id}</p>
+                        <div className="mt-2 flex items-center gap-2">
+                          <label className="text-xs text-muted">Posting</label>
+                          <select
+                            value={ch.posting_mode || 'all'}
+                            onChange={async (e) => {
+                              const nextMode = e.target.value as 'all' | 'leaders_only' | 'admin_only';
+                              setChannelListModal(prev => ({
+                                ...prev,
+                                channels: prev.channels.map((c) => (c.id === ch.id ? { ...c, posting_mode: nextMode } : c)),
+                              }));
+                              await handleUpdateChannelPostingMode(ch.id, nextMode);
+                            }}
+                            className="px-2 py-1 text-xs border border-border rounded-md bg-surface text-foreground"
+                            disabled={!!channelPostingModeSaving[ch.id]}
+                          >
+                            <option value="all">All</option>
+                            <option value="leaders_only">Leaders only</option>
+                            <option value="admin_only">Admin only</option>
+                          </select>
+                          {channelPostingModeSaving[ch.id] && (
+                            <span className="text-xs text-muted">Saving...</span>
+                          )}
+                        </div>
                       </div>
                       <div className="flex gap-2">
                         <button
@@ -1077,6 +1541,8 @@ export default function AdminPage() {
                         </button>
                       </div>
                     </div>
+                      );
+                    })()
                   ))}
                 </div>
               )}

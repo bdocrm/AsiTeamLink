@@ -6,7 +6,9 @@ import { Shield, CheckCircle, AlertTriangle, FileText, Monitor, Lock, Users, Cam
 
 interface AUPModalProps {
   userName: string;
-  onAccept: () => Promise<void>;
+  onAccept?: () => Promise<void>;
+  readOnly?: boolean;
+  onClose?: () => void;
 }
 
 const POLICY_ITEMS = [
@@ -42,11 +44,12 @@ const POLICY_ITEMS = [
   },
 ];
 
-export default function AUPModal({ userName, onAccept }: AUPModalProps) {
+export default function AUPModal({ userName, onAccept, readOnly = false, onClose }: AUPModalProps) {
   const [agreed, setAgreed] = useState(false);
   const [loading, setLoading] = useState(false);
 
   const handleAccept = async () => {
+    if (readOnly || !onAccept) return;
     if (!agreed || loading) return;
     setLoading(true);
     try {
@@ -58,15 +61,12 @@ export default function AUPModal({ userName, onAccept }: AUPModalProps) {
 
   return (
     <div className="fixed inset-0 z-60 flex items-center justify-center p-4">
-      {/* Backdrop — semi-transparent, blocks clicks so modal is focusable */}
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
 
-      {/* Panel */}
       <div
         className="modal-panel relative z-20 w-full max-w-lg mx-2 sm:mx-0 flex flex-col bg-surface shadow-xl overflow-hidden rounded-t-xl sm:rounded-xl"
         style={{ maxHeight: '90vh' }}
       >
-        {/* Header */}
         <div className="flex items-center gap-3 px-4 sm:px-6 pt-5 pb-4 border-b border-border shrink-0">
           <div className="flex items-center justify-center w-10 h-10 rounded-xl gradient-brand shrink-0">
             <FileText className="w-5 h-5 text-white" />
@@ -76,7 +76,7 @@ export default function AUPModal({ userName, onAccept }: AUPModalProps) {
               Acceptable Use Policy
             </h2>
             <p className="text-xs text-muted mt-0.5">
-              Please read and accept before continuing
+              {readOnly ? 'Policy reference' : 'Please read and accept before continuing'}
             </p>
           </div>
           <div className="flex items-center gap-2 shrink-0">
@@ -90,14 +90,12 @@ export default function AUPModal({ userName, onAccept }: AUPModalProps) {
           </div>
         </div>
 
-        {/* Greeting */}
         <div className="px-4 sm:px-6 pt-4 shrink-0">
           <p className="text-sm text-muted">
             Welcome back, <span className="font-semibold text-foreground">{userName}</span>. Before accessing the system, you must acknowledge the following policy.
           </p>
         </div>
 
-        {/* Policy items — scrollable */}
         <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-4 space-y-3 min-h-0">
           {POLICY_ITEMS.map(({ icon: Icon, title, body }) => (
             <div
@@ -115,55 +113,63 @@ export default function AUPModal({ userName, onAccept }: AUPModalProps) {
           ))}
         </div>
 
-        {/* Footer */}
         <div className="px-4 sm:px-6 pb-6 pt-4 border-t border-border shrink-0 space-y-4 bg-surface sticky bottom-0">
-          {/* Checkbox */}
-          <label className="flex items-start gap-3 cursor-pointer group">
-            <div className="relative shrink-0 mt-0.5">
-              <input
-                type="checkbox"
-                checked={agreed}
-                onChange={(e) => setAgreed(e.target.checked)}
-                className="sr-only"
-              />
-              <div
-                className={`w-5 h-5 rounded-md border-2 flex items-center justify-center transition-all duration-200 ${
-                  agreed
-                    ? 'bg-primary border-primary'
-                    : 'border-border group-hover:border-primary/60 bg-surface'
+          {readOnly ? (
+            <button
+              onClick={onClose}
+              className="w-full py-2.5 text-sm font-semibold rounded-lg border border-border text-foreground hover:bg-surface-hover transition-colors"
+            >
+              Close
+            </button>
+          ) : (
+            <>
+              <label className="flex items-start gap-3 cursor-pointer group">
+                <div className="relative shrink-0 mt-0.5">
+                  <input
+                    type="checkbox"
+                    checked={agreed}
+                    onChange={(e) => setAgreed(e.target.checked)}
+                    className="sr-only"
+                  />
+                  <div
+                    className={`w-5 h-5 rounded-md border-2 flex items-center justify-center transition-all duration-200 ${
+                      agreed
+                        ? 'bg-primary border-primary'
+                        : 'border-border group-hover:border-primary/60 bg-surface'
+                    }`}
+                  >
+                    {agreed && <CheckCircle className="w-3.5 h-3.5 text-white" />}
+                  </div>
+                </div>
+                <span className="text-xs text-foreground leading-relaxed">
+                  I have read and understood the Acceptable Use Policy and agree to comply with its terms. I acknowledge that my activities on this platform are monitored and logged.
+                </span>
+              </label>
+
+              <button
+                onClick={handleAccept}
+                disabled={!agreed || loading}
+                className={`btn-primary w-full py-2.5 text-sm font-semibold flex items-center justify-center gap-2 transition-all duration-200 ${
+                  !agreed || loading ? 'opacity-40 cursor-not-allowed' : ''
                 }`}
               >
-                {agreed && <CheckCircle className="w-3.5 h-3.5 text-white" />}
-              </div>
-            </div>
-            <span className="text-xs text-foreground leading-relaxed">
-              I have read and understood the Acceptable Use Policy and agree to comply with its terms. I acknowledge that my activities on this platform are monitored and logged.
-            </span>
-          </label>
-
-          {/* Accept button */}
-          <button
-            onClick={handleAccept}
-            disabled={!agreed || loading}
-            className={`btn-primary w-full py-2.5 text-sm font-semibold flex items-center justify-center gap-2 transition-all duration-200 ${
-              !agreed || loading ? 'opacity-40 cursor-not-allowed' : ''
-            }`}
-          >
-            {loading ? (
-              <>
-                <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                Saving…
-              </>
-            ) : (
-              <>
-                <CheckCircle className="w-4 h-4" />
-                I Agree — Continue to AsiTeamLink
-              </>
-            )}
-          </button>
+                {loading ? (
+                  <>
+                    <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    Saving...
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle className="w-4 h-4" />
+                    I Agree - Continue to AsiTeamLink
+                  </>
+                )}
+              </button>
+            </>
+          )}
 
           <p className="text-[10px] text-muted text-center">
-            Last updated: May 13, 2026 · AsiTeamLink Compliance Team
+            Last updated: May 13, 2026 - AsiTeamLink Compliance Team
           </p>
         </div>
       </div>

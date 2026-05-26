@@ -1,7 +1,6 @@
 'use client';
 
 import { useState } from 'react';
-import { createClient } from '@/lib/supabase/client';
 import Link from 'next/link';
 import Image from 'next/image';
 import { UserPlus, Mail, Lock, User, Eye, EyeOff, CheckCircle } from 'lucide-react';
@@ -14,7 +13,6 @@ export default function RegisterPage() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
   const [loading, setLoading] = useState(false);
-  const supabase = createClient();
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -27,18 +25,14 @@ export default function RegisterPage() {
       return;
     }
 
-    const { error: authError } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        // Ensure email links redirect to the deployed app URL (Vercel)
-        emailRedirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/api/auth/callback`,
-        data: { name },
-      },
+    const res = await fetch('/api/auth/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password, name }),
     });
-
-    if (authError) {
-      setError(authError.message);
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setError(j?.error || 'Failed to register');
       setLoading(false);
       return;
     }

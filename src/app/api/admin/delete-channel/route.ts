@@ -50,6 +50,92 @@ export async function POST(req: Request) {
 
     const oldName = existing?.name || null;
 
+    // Delete dependent rows first to avoid FK violations in projects
+    // where FK constraints are not ON DELETE CASCADE.
+    let channelMessageIds: string[] = [];
+    try {
+      const messageRowsRes = await adminSupabase.from('messages').select('id').eq('channel_id', channelId);
+      if (messageRowsRes.error) {
+        console.error('Failed to load channel messages for delete (supabase error):', messageRowsRes.error);
+        return NextResponse.json({ error: messageRowsRes.error.message || 'Failed to load channel messages' }, { status: 500 });
+      }
+      channelMessageIds = (messageRowsRes.data || []).map((m: { id: string }) => m.id).filter(Boolean);
+    } catch (e) {
+      console.error('Exception while loading channel messages for delete:', e);
+      return NextResponse.json({ error: 'Failed to load channel messages (exception)' }, { status: 500 });
+    }
+
+    // attachment_logs -> messages
+    if (channelMessageIds.length > 0) {
+      try {
+        const delAttachmentLogsRes = await adminSupabase.from('attachment_logs').delete().in('message_id', channelMessageIds);
+        if (delAttachmentLogsRes.error) {
+          console.error('Failed to delete attachment logs (supabase error):', delAttachmentLogsRes.error);
+          return NextResponse.json({ error: delAttachmentLogsRes.error.message || 'Failed to delete attachment logs' }, { status: 500 });
+        }
+      } catch (e) {
+        console.error('Exception while deleting attachment logs:', e);
+        return NextResponse.json({ error: 'Failed to delete attachment logs (exception)' }, { status: 500 });
+      }
+
+      try {
+        const delAuditLogsRes = await adminSupabase.from('audit_logs').delete().in('message_id', channelMessageIds);
+        if (delAuditLogsRes.error) {
+          console.error('Failed to delete audit logs (supabase error):', delAuditLogsRes.error);
+          return NextResponse.json({ error: delAuditLogsRes.error.message || 'Failed to delete audit logs' }, { status: 500 });
+        }
+      } catch (e) {
+        console.error('Exception while deleting audit logs:', e);
+        return NextResponse.json({ error: 'Failed to delete audit logs (exception)' }, { status: 500 });
+      }
+    }
+
+    // channel_reads -> channels
+    try {
+      const delChannelReadsRes = await adminSupabase.from('channel_reads').delete().eq('channel_id', channelId);
+      if (delChannelReadsRes.error) {
+        console.error('Failed to delete channel reads (supabase error):', delChannelReadsRes.error);
+        return NextResponse.json({ error: delChannelReadsRes.error.message || 'Failed to delete channel reads' }, { status: 500 });
+      }
+    } catch (e) {
+      console.error('Exception while deleting channel reads:', e);
+      return NextResponse.json({ error: 'Failed to delete channel reads (exception)' }, { status: 500 });
+    }
+
+    // file_audit_logs -> channels
+    try {
+      const delFileAuditLogsRes = await adminSupabase.from('file_audit_logs').delete().eq('channel_id', channelId);
+      if (delFileAuditLogsRes.error) {
+        console.error('Failed to delete file audit logs (supabase error):', delFileAuditLogsRes.error);
+        return NextResponse.json({ error: delFileAuditLogsRes.error.message || 'Failed to delete file audit logs' }, { status: 500 });
+      }
+    } catch (e) {
+      console.error('Exception while deleting file audit logs:', e);
+      return NextResponse.json({ error: 'Failed to delete file audit logs (exception)' }, { status: 500 });
+    }
+
+    try {
+      const delMessagesRes = await adminSupabase.from('messages').delete().eq('channel_id', channelId);
+      if (delMessagesRes.error) {
+        console.error('Failed to delete channel messages (supabase error):', delMessagesRes.error);
+        return NextResponse.json({ error: delMessagesRes.error.message || 'Failed to delete channel messages' }, { status: 500 });
+      }
+    } catch (e) {
+      console.error('Exception while deleting channel messages:', e);
+      return NextResponse.json({ error: 'Failed to delete channel messages (exception)' }, { status: 500 });
+    }
+
+    try {
+      const delMembersRes = await adminSupabase.from('channel_members').delete().eq('channel_id', channelId);
+      if (delMembersRes.error) {
+        console.error('Failed to delete channel members (supabase error):', delMembersRes.error);
+        return NextResponse.json({ error: delMembersRes.error.message || 'Failed to delete channel members' }, { status: 500 });
+      }
+    } catch (e) {
+      console.error('Exception while deleting channel members:', e);
+      return NextResponse.json({ error: 'Failed to delete channel members (exception)' }, { status: 500 });
+    }
+
     // delete channel
     try {
       const delRes = await adminSupabase.from('channels').delete().eq('id', channelId);

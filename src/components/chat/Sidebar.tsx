@@ -15,12 +15,18 @@ import {
   PanelLeftClose,
   PanelLeft,
   MessageSquare,
-  Bell,
+  Megaphone,
   Eye,
 } from 'lucide-react';
 import type { Channel, Campaign } from '@/lib/types';
 import { useRouter } from 'next/navigation';
 import { CreateChannelModal } from './CreateChannelModal';
+import {
+  getNotificationPreferences,
+  NOTIFICATION_PREFS_EVENT,
+  shouldNotifyForMessage,
+  type NotificationPreferences,
+} from '@/lib/notificationPreferences';
 
 interface SidebarProps {
   selectedChannel: Channel | null;
@@ -37,13 +43,20 @@ export function Sidebar({ selectedChannel, onSelectChannel, collapsed, onToggleC
   const [showCreateChannelModal, setShowCreateChannelModal] = useState(false);
   const [selectedCampaignForCreate, setSelectedCampaignForCreate] = useState<string>('');
   const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>({});
+  const [mentionUnreadCounts, setMentionUnreadCounts] = useState<Record<string, number>>({});
+  const [announcementUnreadCounts, setAnnouncementUnreadCounts] = useState<Record<string, number>>({});
+  const [notificationPrefs, setNotificationPrefs] = useState<NotificationPreferences>(() => getNotificationPreferences());
   const supabase = createClient();
   const router = useRouter();
 
   useEffect(() => {
     fetchChannels();
     fetchCampaigns();
-    if (user) fetchUnreadCounts();
+    if (user) {
+      fetchUnreadCounts();
+      fetchMentionUnreadCounts();
+      fetchAnnouncementUnreadCounts();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
@@ -51,6 +64,12 @@ export function Sidebar({ selectedChannel, onSelectChannel, collapsed, onToggleC
     const handler = () => fetchChannels();
     window.addEventListener('channelsUpdated', handler as EventListener);
     return () => window.removeEventListener('channelsUpdated', handler as EventListener);
+  }, []);
+
+  useEffect(() => {
+    const sync = () => setNotificationPrefs(getNotificationPreferences());
+    window.addEventListener(NOTIFICATION_PREFS_EVENT, sync as EventListener);
+    return () => window.removeEventListener(NOTIFICATION_PREFS_EVENT, sync as EventListener);
   }, []);
 
   // Listen for new messages globally to update unread counts + send browser notifications
@@ -62,8 +81,8 @@ export function Sidebar({ selectedChannel, onSelectChannel, collapsed, onToggleC
       .on(
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'messages' },
-        (payload: any) => {
-          const msg = payload.new as { channel_id: string; sender_id: string; text: string | null };
+        (payload: { new: { channel_id: string; sender_id: string; text: string | null } }) => {
+          const msg = payload.new;
           if (msg.sender_id === user.id) return;
 
           if (msg.channel_id !== selectedChannel?.id) {
@@ -73,7 +92,14 @@ export function Sidebar({ selectedChannel, onSelectChannel, collapsed, onToggleC
             }));
           }
 
-          if (Notification.permission === 'granted' && document.hidden) {
+          const canNotify = shouldNotifyForMessage({
+            prefs: notificationPrefs,
+            channelId: msg.channel_id,
+            messageText: msg.text,
+            currentUserName: user.name,
+            currentUserEmail: user.email,
+          });
+          if (canNotify && Notification.permission === 'granted' && document.hidden) {
             const notification = new Notification('AsiTeamLink', {
               body: msg.text || 'Sent an attachment',
               icon: '/asiteamlinklogo.png',
@@ -100,6 +126,32 @@ export function Sidebar({ selectedChannel, onSelectChannel, collapsed, onToggleC
         counts[r.channel_id] = r.unread_count;
       });
       setUnreadCounts(counts);
+    }
+  };
+
+  const fetchMentionUnreadCounts = async () => {
+    if (!user) return;
+    const { data } = await supabase.rpc('get_mentions_for_user', { p_user_id: user.id });
+    if (data) {
+      const counts: Record<string, number> = {};
+      (data as { channel_id: string; is_read: boolean }[])
+        .filter(r => !r.is_read)
+        .forEach(r => {
+          counts[r.channel_id] = (counts[r.channel_id] || 0) + 1;
+        });
+      setMentionUnreadCounts(counts);
+    }
+  };
+
+  const fetchAnnouncementUnreadCounts = async () => {
+    if (!user) return;
+    const { data } = await supabase.rpc('get_unread_announcement_counts', { p_user_id: user.id });
+    if (data) {
+      const counts: Record<string, number> = {};
+      (data as { campaign_id: string; unread_count: number }[]).forEach(r => {
+        counts[r.campaign_id] = Number(r.unread_count || 0);
+      });
+      setAnnouncementUnreadCounts(counts);
     }
   };
 
@@ -155,6 +207,32 @@ export function Sidebar({ selectedChannel, onSelectChannel, collapsed, onToggleC
     });
     if (user) {
       await supabase.rpc('mark_channel_read', { p_user_id: user.id, p_channel_id: channel.id });
+      if (channel.id?.startsWith?.('announcements:')) {
+        const annCampaignId = channel.id.split(':').pop();
+        if (annCampaignId) {
+          try {
+            await fetch('/api/announcements/mark-read', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ campaign_id: annCampaignId }),
+            });
+            setAnnouncementUnreadCounts(prev => ({ ...prev, [annCampaignId]: 0 }));
+          } catch {}
+        }
+      }
+      const { data: mentions } = await supabase.rpc('get_mentions_for_user', { p_user_id: user.id });
+      if (mentions) {
+        const unreadInChannel = (mentions as { mention_id: string; channel_id: string; is_read: boolean }[])
+          .filter(m => m.channel_id === channel.id && !m.is_read);
+        if (unreadInChannel.length > 0) {
+          await Promise.all(unreadInChannel.map(m => supabase.rpc('mark_mention_read', { p_mention_id: m.mention_id })));
+        }
+      }
+      setMentionUnreadCounts(prev => {
+        const next = { ...prev };
+        delete next[channel.id];
+        return next;
+      });
     }
   };
 
@@ -181,6 +259,36 @@ export function Sidebar({ selectedChannel, onSelectChannel, collapsed, onToggleC
     acc[campaign.id] = channels.filter(c => c.campaign_id === campaign.id);
     return acc;
   }, {} as Record<string, Channel[]>);
+
+  useEffect(() => {
+    if (!user) return;
+    const mentionSub = supabase
+      .channel(`sidebar-mentions:${user.id}`)
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'message_mentions', filter: `mentioned_user_id=eq.${user.id}` },
+        async (payload: { new: { message_id: string } }) => {
+          const mention = payload.new;
+          if (!mention?.message_id) return;
+          const { data: msgRow } = await supabase
+            .from('messages')
+            .select('channel_id')
+            .eq('id', mention.message_id)
+            .maybeSingle();
+          if (!msgRow?.channel_id) return;
+          if (selectedChannel?.id === msgRow.channel_id) return;
+          setMentionUnreadCounts(prev => ({
+            ...prev,
+            [msgRow.channel_id]: (prev[msgRow.channel_id] || 0) + 1,
+          }));
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(mentionSub);
+    };
+  }, [user, selectedChannel, notificationPrefs]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Collapsed sidebar
   if (collapsed) {
@@ -270,10 +378,11 @@ export function Sidebar({ selectedChannel, onSelectChannel, collapsed, onToggleC
 
         {campaigns.map(campaign => {
           const campaignChannels = groupedChannels[campaign.id] || [];
-          if (user?.role !== 'admin' && user?.campaign_id !== campaign.id) return null;
+          // Non-admin users can see any campaign where they have channel membership.
           if (campaignChannels.length === 0 && user?.role !== 'admin') return null;
 
           const campaignUnread = campaignChannels.reduce((sum, ch) => sum + (unreadCounts[ch.id] || 0), 0);
+          const campaignMentions = campaignChannels.reduce((sum, ch) => sum + (mentionUnreadCounts[ch.id] || 0), 0);
 
           return (
             <div key={campaign.id} className="mb-1">
@@ -289,9 +398,9 @@ export function Sidebar({ selectedChannel, onSelectChannel, collapsed, onToggleC
                   )}
                 </div>
                 <span className="flex-1 text-left">{campaign.name}</span>
-                {campaignUnread > 0 ? (
+                {(campaignUnread > 0 || campaignMentions > 0) ? (
                   <span className="unread-badge">
-                    {campaignUnread > 99 ? '99+' : campaignUnread}
+                    {campaignMentions > 0 ? `@${campaignMentions > 99 ? '99+' : campaignMentions}` : (campaignUnread > 99 ? '99+' : campaignUnread)}
                   </span>
                 ) : (
                   <span className="text-[10px] font-normal bg-surface-hover px-1.5 py-0.5 rounded-md opacity-60 group-hover:opacity-100 transition-opacity">
@@ -309,18 +418,32 @@ export function Sidebar({ selectedChannel, onSelectChannel, collapsed, onToggleC
               >
                 <div className="ml-1 py-0.5">
                   {/** Announcements entry for specific campaigns */}
-                  {(campaign.name === 'SSU' || campaign.name === 'SALES') && (
+                  {(
                     <button
-                      onClick={() => handleSelectChannel({ id: `announcements:${campaign.id}`, name: 'Announcements', campaign_id: campaign.id, created_by: null, created_at: new Date().toISOString() } as any)}
+                      onClick={() =>
+                        handleSelectChannel({
+                          id: `announcements:${campaign.id}`,
+                          name: 'Announcements',
+                          campaign_id: campaign.id,
+                          created_by: null,
+                          created_at: new Date().toISOString(),
+                        } as Channel)
+                      }
                       className={`w-full flex items-center gap-2.5 px-3 py-[7px] text-sm transition-all duration-200 text-muted hover:text-foreground hover:bg-surface-hover`}
                     >
-                      <Bell className={`w-4 h-4 shrink-0`} />
+                      <Megaphone className={`w-4 h-4 shrink-0`} />
                       <span className="truncate flex-1 text-left">Announcements</span>
+                      {(announcementUnreadCounts[campaign.id] || 0) > 0 && (
+                        <span className="unread-badge">
+                          {announcementUnreadCounts[campaign.id] > 99 ? '99+' : announcementUnreadCounts[campaign.id]}
+                        </span>
+                      )}
                     </button>
                   )}
                   {campaignChannels.map(channel => {
                     const isActive = selectedChannel?.id === channel.id;
                     const hasUnread = unreadCounts[channel.id] > 0 && !isActive;
+                    const mentionUnread = mentionUnreadCounts[channel.id] || 0;
 
                     return (
                       <button
@@ -336,9 +459,9 @@ export function Sidebar({ selectedChannel, onSelectChannel, collapsed, onToggleC
                       >
                         <Hash className={`w-4 h-4 shrink-0 ${isActive ? 'text-primary' : ''}`} />
                         <span className="truncate flex-1 text-left">{channel.name}</span>
-                        {hasUnread && (
+                        {(hasUnread || mentionUnread > 0) && (
                           <span className="unread-badge">
-                            {unreadCounts[channel.id] > 99 ? '99+' : unreadCounts[channel.id]}
+                            {mentionUnread > 0 ? `@${mentionUnread > 99 ? '99+' : mentionUnread}` : (unreadCounts[channel.id] > 99 ? '99+' : unreadCounts[channel.id])}
                           </span>
                         )}
                       </button>

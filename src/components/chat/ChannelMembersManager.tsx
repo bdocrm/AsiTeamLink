@@ -149,16 +149,33 @@ export function ChannelMembersManager({ channel, isOpen, onClose }: ChannelMembe
 
   const fetchAvailableMembers = async () => {
     try {
-      // Get all users, not just campaign members - removed campaign restriction
+      // Try direct users query first.
+      let usersList: UserType[] = [];
       const { data, error: err } = await supabase
         .from('users')
         .select('id, name, email, role, campaign_id')
         .order('name', { ascending: true });
 
-      if (err) return;
+      if (!err && data) {
+        usersList = data as UserType[];
+      }
+
+      // Fallback for stricter RLS setups: use RPC source if available.
+      if (usersList.length === 0) {
+        const { data: rpcUsers, error: rpcErr } = await supabase.rpc('get_all_users');
+        if (!rpcErr && Array.isArray(rpcUsers)) {
+          usersList = (rpcUsers as any[]).map((u) => ({
+            id: u.id,
+            name: u.name,
+            email: u.email,
+            role: u.role || u.user_role || 'agent',
+            campaign_id: u.campaign_id ?? null,
+          })) as UserType[];
+        }
+      }
 
       const alreadyMembers = new Set(members.map(m => m.user_id));
-      const available = (data as UserType[]).filter(m => !alreadyMembers.has(m.id) && m.id !== user?.id);
+      const available = usersList.filter(m => !alreadyMembers.has(m.id) && m.id !== user?.id);
       setAvailableToAdd(available);
     } catch (err) {
       console.error('Failed to fetch available members:', err);
@@ -290,7 +307,7 @@ export function ChannelMembersManager({ channel, isOpen, onClose }: ChannelMembe
                 <div className="space-y-2">
                   {availableToAdd.length === 0 ? (
                     <div className="p-3 text-center text-muted text-sm bg-surface-hover rounded-lg">
-                      All campaign members are already in this channel
+                      No available users to add
                     </div>
                   ) : (
                     <>
@@ -334,8 +351,8 @@ export function ChannelMembersManager({ channel, isOpen, onClose }: ChannelMembe
                             </div>
                             <div className="flex-1 min-w-0">
                               <p className="text-sm text-foreground truncate">{member.name}</p>
-                              <p className={`text-xs ${getUserRoleBadge(member.role)}`}>
-                                {member.role.toUpperCase()}
+                              <p className={`text-xs ${getUserRoleBadge(member.role || 'agent')}`}>
+                                {(member.role || 'agent').toUpperCase()}
                               </p>
                             </div>
                           </button>

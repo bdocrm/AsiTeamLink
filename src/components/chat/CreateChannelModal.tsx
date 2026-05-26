@@ -109,7 +109,8 @@ export function CreateChannelModal({ isOpen, campaignId, onClose, onChannelCreat
       const memberCount = data?.member_count || selectedMembers.size + 1;
       setSuccess(`✓ Channel '${channelName}' created with ${memberCount} member${memberCount !== 1 ? 's' : ''}!`);
       setTimeout(() => {
-        onChannelCreated(channelName);
+        try { window.dispatchEvent(new CustomEvent('channelsUpdated')); } catch (e) {}
+        try { onChannelCreated(channelName); } catch (e) {}
         setChannelName('');
         setSelectedMembers(new Set());
         onClose();

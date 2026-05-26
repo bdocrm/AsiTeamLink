@@ -26,6 +26,7 @@ import {
   Search,
   Bell,
   BellOff,
+  Megaphone,
   Menu,
 } from 'lucide-react';
 import type { Channel, Message, User, Reaction } from '@/lib/types';
@@ -38,12 +39,30 @@ import MessageBox from '@/components/ui/MessageBox';
 import { checkText } from '@/lib/languageClient';
 import CreateAnnouncementModal from './CreateAnnouncementModal';
 import type { Announcement } from '@/lib/types';
+import {
+  getNotificationPreferences,
+  isQuietHoursNow,
+  NOTIFICATION_PREFS_EVENT,
+  type NotificationPreferences,
+} from '@/lib/notificationPreferences';
 
 interface ChatAreaProps {
   channel: Channel | null;
   showMembers: boolean;
   onToggleMembers: () => void;
   onToggleSidebar?: () => void;
+}
+
+type DeliveryState = 'sending' | 'failed';
+interface RetryPayload {
+  channel_id: string;
+  sender_id: string;
+  text: string | null;
+  attachment_url: string | null;
+  attachment_name: string | null;
+  attachment_size: number | null;
+  reply_to_id: string | null;
+  mentionSelectedIds: string[];
 }
 
 function formatFileSize(bytes: number): string {
@@ -73,6 +92,10 @@ function isImageUrl(url: string): boolean {
   // Data URLs for pasted images
   if (url.startsWith('data:image/')) return true;
   return false;
+}
+
+function isUuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
 
 // Parse message text to find URLs and render them as clickable links + auto-embed images
@@ -127,6 +150,17 @@ function parseMessageContent(text: string): { parts: { type: 'text' | 'link' | '
   return { parts };
 }
 
+const TYPING_TTL_MS = 3500;
+const PRESENCE_STALE_MS = 45000;
+const PRESENCE_HEARTBEAT_MS = 15000;
+const SEND_RATE_WINDOW_MS = 10000;
+const SEND_RATE_MAX = 8;
+const DUPLICATE_SPAM_WINDOW_MS = 60000;
+const DUPLICATE_SPAM_MAX = 3;
+const BLOCKED_KEYWORDS = ['scam', 'fraud', 'hack', 'password leak', 'credential dump'];
+const MESSAGE_PAGE_SIZE = 50;
+const INITIAL_RENDER_WINDOW = 140;
+
 export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSidebar }: ChatAreaProps) {
   const { user } = useAuth();
   const [messages, setMessages] = useState<Message[]>([]);
@@ -153,9 +187,11 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
   const [replyTo, setReplyTo] = useState<Message | null>(null);
   const [reactions, setReactions] = useState<Record<string, { emoji: string; users: { id: string; name: string }[] }[]>>({});
   const [showEmojiFor, setShowEmojiFor] = useState<string | null>(null);
-  const [typingUsers, setTypingUsers] = useState<Record<string, { name: string; timer: NodeJS.Timeout }>>({});
+  const [typingUsers, setTypingUsers] = useState<Record<string, { name: string; lastSeen: number }>>({});
   const [channelReaders, setChannelReaders] = useState<{ user_id: string; user_name: string; last_read_at: string }[]>([]);
   const [hoveredReaction, setHoveredReaction] = useState<string | null>(null);
+  const [openSeenByFor, setOpenSeenByFor] = useState<string | null>(null);
+  const [openMessageSeenByFor, setOpenMessageSeenByFor] = useState<string | null>(null);
   const [pinnedMessages, setPinnedMessages] = useState<any[]>([]);
   const [showPinnedPanel, setShowPinnedPanel] = useState(false);
   const [myMentions, setMyMentions] = useState<Record<string, boolean>>({});
@@ -165,16 +201,30 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
   const [deletingMessageId, setDeletingMessageId] = useState<string | null>(null);
   const [onlineUsers, setOnlineUsers] = useState<Set<string>>(new Set()); // Track online user IDs
   const [searchQuery, setSearchQuery] = useState('');
+  const [searchFilter, setSearchFilter] = useState<'all' | 'messages' | 'files' | 'mentions'>('all');
   const [searchResults, setSearchResults] = useState<string[]>([]); // message ids
   const [activeSearchIndex, setActiveSearchIndex] = useState<number>(0);
   const [searchFocused, setSearchFocused] = useState(false);
   const [muted, setMuted] = useState(false);
+  const [notificationPrefs, setNotificationPrefs] = useState<NotificationPreferences>(() => getNotificationPreferences());
   const [activeUsersInChannel, setActiveUsersInChannel] = useState<{ id: string; name: string; is_online: boolean }[]>([]); // Users viewing this channel
   const [showChannelMembersManager, setShowChannelMembersManager] = useState(false);
   const [showChannelFilesManager, setShowChannelFilesManager] = useState(false);
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
+  const [announcementsLoading, setAnnouncementsLoading] = useState(false);
+  const [announcementsHasMore, setAnnouncementsHasMore] = useState(false);
+  const [announcementsOffset, setAnnouncementsOffset] = useState(0);
+  const [announcementScopeFilter, setAnnouncementScopeFilter] = useState<'all' | 'campaign' | 'channel'>('all');
   const [showCreateAnnouncementModal, setShowCreateAnnouncementModal] = useState(false);
+  const [channelAnnouncementCount, setChannelAnnouncementCount] = useState<number | null>(null);
   const [duplicateFileConfirm, setDuplicateFileConfirm] = useState<{ show: boolean; fileName: string; file: File | null }>({ show: false, fileName: '', file: null });
+  const [messageDelivery, setMessageDelivery] = useState<Record<string, { status: DeliveryState; error?: string; retryPayload?: RetryPayload }>>({});
+  const [muteState, setMuteState] = useState<{ mutedUntil: string | null; reason: string | null }>({ mutedUntil: null, reason: null });
+  const [nowTick, setNowTick] = useState(Date.now());
+  const [channelPostingMode, setChannelPostingMode] = useState<'all' | 'leaders_only' | 'admin_only'>('all');
+  const [hasOlderMessages, setHasOlderMessages] = useState(false);
+  const [loadingOlderMessages, setLoadingOlderMessages] = useState(false);
+  const [renderWindowSize, setRenderWindowSize] = useState(INITIAL_RENDER_WINDOW);
 
   // Members for mention-autocomplete
   const [channelMembers, setChannelMembers] = useState<User[]>([]);
@@ -184,6 +234,7 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
   const [mentionSelectedIndex, setMentionSelectedIndex] = useState(0);
   const [suggestionPos, setSuggestionPos] = useState<{ left: number; top?: number; bottom?: number; width: number } | null>(null);
   const [mentionSelectedIds, setMentionSelectedIds] = useState<string[]>([]); // track selected mention user ids for the pending message
+  const [unreadMentionMap, setUnreadMentionMap] = useState<Record<string, string[]>>({}); // message_id -> mention_ids
 
   const QUICK_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🔥', '🎉', '👏'];
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -191,6 +242,12 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
   const messageInputRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const typingChannelRef = useRef<any>(null);
+  const presenceHeartbeatRef = useRef<NodeJS.Timeout | null>(null);
+  const presenceMetaRef = useRef<Record<string, { id: string; name: string; lastSeen: number }>>({});
+  const sendGuardRef = useRef<{ signature: string; at: number } | null>(null);
+  const sendHistoryRef = useRef<{ at: number; textSig: string }[]>([]);
+  const skipAutoScrollRef = useRef(false);
   const supabase = createClient();
   // Cache and in-flight tracking for grammar checks to reduce API calls
   const checkCacheRef = useRef<Map<string, any>>(new Map());
@@ -202,23 +259,148 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, []);
 
+  const fetchChannelReaders = useCallback(async () => {
+    if (!channel || !isUuid(channel.id)) {
+      setChannelReaders([]);
+      return;
+    }
+    try {
+      const { data, error } = await supabase
+        .from('channel_reads')
+        .select('user_id,last_read_at,users(name)')
+        .eq('channel_id', channel.id);
+      if (error) {
+        console.warn('Failed to fetch channel readers:', error);
+        return;
+      }
+      const rows = (data || []) as { user_id: string; last_read_at: string; users?: { name?: string | null } | null }[];
+      setChannelReaders(
+        rows.map((r) => ({
+          user_id: r.user_id,
+          user_name: r.users?.name || 'Unknown',
+          last_read_at: r.last_read_at,
+        }))
+      );
+    } catch (e) {
+      console.warn('Failed to fetch channel readers:', e);
+    }
+  }, [channel?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const isAnnouncementsView = channel?.id?.startsWith?.('announcements:');
+  const announcementsCampaignId =
+    (channel?.id?.startsWith?.('announcements:') ? channel.id.split(':').pop() : null) ||
+    channel?.campaign_id ||
+    null;
+
+  useEffect(() => {
+    if (!channel || isAnnouncementsView || !isUuid(channel.id)) {
+      setChannelPostingMode('all');
+      return;
+    }
+    let mounted = true;
+    const loadPostingMode = async () => {
+      const { data } = await supabase
+        .from('channels')
+        .select('posting_mode')
+        .eq('id', channel.id)
+        .maybeSingle();
+      const nextMode = ((data as any)?.posting_mode || (channel as any).posting_mode || 'all') as 'all' | 'leaders_only' | 'admin_only';
+      if (mounted) setChannelPostingMode(nextMode);
+    };
+    loadPostingMode();
+    return () => { mounted = false; };
+  }, [channel?.id, isAnnouncementsView]);
+
+  const canPostInChannel = (() => {
+    if (!user) return false;
+    if (isAnnouncementsView) return true;
+    if (channelPostingMode === 'leaders_only') return ['admin', 'manager', 'tl'].includes(user.role);
+    if (channelPostingMode === 'admin_only') return user.role === 'admin';
+    return true;
+  })();
+
+  const postingModeLabel =
+    channelPostingMode === 'leaders_only'
+      ? 'Leaders only'
+      : channelPostingMode === 'admin_only'
+      ? 'Admins only'
+      : 'Everyone can post';
+
+  const postingRestrictionReason =
+    channelPostingMode === 'leaders_only'
+      ? 'Posting is restricted to Admin, Manager, and TL for this channel.'
+      : channelPostingMode === 'admin_only'
+      ? 'Posting is restricted to Admin only for this channel.'
+      : '';
+  const canCreateAnnouncement = user?.role === 'admin' || user?.role === 'manager' || user?.role === 'tl';
+  const canViewAnnouncementReadStats = user?.role === 'admin' || user?.role === 'manager' || user?.role === 'tl' || user?.role === 'compliance';
+
+  const loadAnnouncements = useCallback(async (opts?: { reset?: boolean }) => {
+    const campaignId = announcementsCampaignId;
+    if (!campaignId) return;
+    const reset = !!opts?.reset;
+    const nextOffset = reset ? 0 : announcementsOffset;
+    setAnnouncementsLoading(true);
+    try {
+      const res = await fetch(
+        `/api/announcements?campaign_id=${encodeURIComponent(campaignId)}&limit=20&offset=${nextOffset}`
+      );
+      const raw = await res.text();
+      const j = raw ? JSON.parse(raw) : {};
+      if (!res.ok) {
+        console.error('Failed to load announcements', { status: res.status, body: j, campaignId });
+        return;
+      }
+      const rows = (j.data || []) as Announcement[];
+      setAnnouncements(prev => (reset ? rows : [...prev, ...rows]));
+      setAnnouncementsHasMore(!!j?.pagination?.has_more);
+      setAnnouncementsOffset(nextOffset + rows.length);
+    } catch (e) {
+      console.error('Failed to fetch announcements', e);
+    } finally {
+      setAnnouncementsLoading(false);
+    }
+  }, [announcementsCampaignId, announcementsOffset]);
 
   useEffect(() => {
     if (!isAnnouncementsView) return;
-    const campaignId = channel!.id.split(':')[1];
-    const load = async () => {
+    const campaignId = announcementsCampaignId;
+    if (!campaignId) {
+      console.error('Announcements view has no campaign id', { channelId: channel?.id, campaignIdFromChannel: channel?.campaign_id });
+      setAnnouncements([]);
+      setAnnouncementsHasMore(false);
+      setAnnouncementsOffset(0);
+      return;
+    }
+    setAnnouncements([]);
+    setAnnouncementsHasMore(false);
+    setAnnouncementsOffset(0);
+    loadAnnouncements({ reset: true });
+  }, [channel?.id, channel?.campaign_id, isAnnouncementsView, announcementsCampaignId]);
+
+  useEffect(() => {
+    if (!channel || isAnnouncementsView || !channel.campaign_id) {
+      setChannelAnnouncementCount(null);
+      return;
+    }
+    let mounted = true;
+    const loadCount = async () => {
       try {
-        const res = await fetch(`/api/announcements?campaign_id=${encodeURIComponent(campaignId)}`);
-        const j = await res.json();
-        if (res.ok) setAnnouncements(j.data || []);
-        else console.error('Failed to load announcements', j);
-      } catch (e) {
-        console.error('Failed to fetch announcements', e);
+        const res = await fetch(
+          `/api/announcements?campaign_id=${encodeURIComponent(channel.campaign_id)}&limit=1&offset=0`
+        );
+        const raw = await res.text();
+        const j = raw ? JSON.parse(raw) : {};
+        if (!res.ok) return;
+        const totalVisible = Number(j?.pagination?.total_visible ?? 0);
+        if (mounted) setChannelAnnouncementCount(Number.isFinite(totalVisible) ? totalVisible : 0);
+      } catch {
+        // ignore
       }
     };
-    load();
-  }, [channel?.id]);
+    loadCount();
+    return () => { mounted = false; };
+  }, [channel?.id, channel?.campaign_id, isAnnouncementsView]);
 
   const toggleAnnouncementReaction = async (announcementId: string, emoji: string) => {
     if (!user) return;
@@ -261,6 +443,28 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
     }
   };
 
+  const deleteAnnouncement = async (announcementId: string) => {
+    if (!user || user.role !== 'admin') return;
+    const ok = window.confirm('Delete this announcement?');
+    if (!ok) return;
+    try {
+      const res = await fetch('/api/announcements', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: announcementId }),
+      });
+      const raw = await res.text();
+      const j = raw ? JSON.parse(raw) : {};
+      if (!res.ok) {
+        alert('Failed to delete announcement: ' + (j?.error || res.statusText));
+        return;
+      }
+      setAnnouncements(prev => prev.filter(a => a.id !== announcementId));
+    } catch (e: any) {
+      alert('Failed to delete announcement: ' + (e?.message || 'Unknown error'));
+    }
+  };
+
   const scrollToMessage = (messageId: string) => {
     const el = messageRefs.current[messageId];
     if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -269,6 +473,9 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
   // Play a short notification sound using WebAudio (no external file)
   const playNotification = () => {
     if (muted) return;
+    if (!notificationPrefs.desktopSound) return;
+    if (channel?.id && notificationPrefs.mutedChannelIds.includes(channel.id)) return;
+    if (isQuietHoursNow(notificationPrefs)) return;
     try {
       const AudioCtx = (window as any).AudioContext || (window as any).webkitAudioContext;
       if (!AudioCtx) return;
@@ -297,15 +504,35 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
   // Update search results when query or messages change
   useEffect(() => {
     const q = searchQuery.trim().toLowerCase();
-    if (!q) {
+    if (!q && searchFilter === 'all') {
       setSearchResults([]);
       setActiveSearchIndex(0);
       return;
     }
     const ids: string[] = [];
     for (const m of messages) {
-      if ((m.text && m.text.toLowerCase().includes(q)) || (m.attachment_name && m.attachment_name.toLowerCase().includes(q))) {
+      const textValue = (m.text || '').toLowerCase();
+      const attachmentNameValue = (m.attachment_name || '').toLowerCase();
+      const attachmentUrlValue = (m.attachment_url || '').toLowerCase();
+      const hasFile = !!(m.attachment_url || m.attachment_name || m.attachment_size);
+      const hasMention = textValue.includes('@');
+
+      const matchesQuery =
+        !q ||
+        textValue.includes(q) ||
+        attachmentNameValue.includes(q) ||
+        attachmentUrlValue.includes(q);
+
+      if (!matchesQuery) continue;
+
+      if (searchFilter === 'all') {
         ids.push(m.id);
+      } else if (searchFilter === 'messages') {
+        if (textValue.length > 0) ids.push(m.id);
+      } else if (searchFilter === 'files') {
+        if (hasFile) ids.push(m.id);
+      } else if (searchFilter === 'mentions') {
+        if (hasMention) ids.push(m.id);
       }
     }
     setSearchResults(ids);
@@ -314,7 +541,7 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
     if (ids.length > 0) {
       setTimeout(() => scrollToMessage(ids[0]), 150);
     }
-  }, [searchQuery, messages]);
+  }, [searchQuery, searchFilter, messages]);
 
   // Load muted preference from localStorage
   useEffect(() => {
@@ -349,6 +576,44 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
       localStorage.setItem('asiteam_check_mode', checkMode);
     } catch (e) {}
   }, [checkMode]);
+
+  // Persist search filter preference
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('asiteam_search_filter');
+      if (saved === 'all' || saved === 'messages' || saved === 'files' || saved === 'mentions') {
+        setSearchFilter(saved);
+      }
+    } catch (e) {}
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('asiteam_search_filter', searchFilter);
+    } catch (e) {}
+  }, [searchFilter]);
+
+  useEffect(() => {
+    if (!user) return;
+    const loadMute = async () => {
+      try {
+        const { data } = await supabase
+          .from('users')
+          .select('muted_until, muted_reason')
+          .eq('id', user.id)
+          .maybeSingle();
+        setMuteState({ mutedUntil: (data as any)?.muted_until || null, reason: (data as any)?.muted_reason || null });
+      } catch (e) {
+        // ignore
+      }
+    };
+    loadMute();
+  }, [user]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    const t = setInterval(() => setNowTick(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
 
   // Top-level handlers for delete confirmation modal
   const handleDelete = async (msg: Message) => {
@@ -541,12 +806,16 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
   useEffect(() => {
     if (!channel) {
       setMessages([]);
+      setHasOlderMessages(false);
+      setRenderWindowSize(INITIAL_RENDER_WINDOW);
       return;
     }
 
     // If this is the announcements pseudo-channel, don't fetch messages from the messages table
     if (channel.id?.startsWith?.('announcements:')) {
       setMessages([]);
+      setHasOlderMessages(false);
+      setRenderWindowSize(INITIAL_RENDER_WINDOW);
       return;
     }
 
@@ -554,14 +823,13 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
 
     const fetchMessages = async () => {
       try {
-        // Fetch most recent messages (limit) and reverse to ascending order
-        const LIMIT = 200;
+        // Fetch most recent messages page and reverse to ascending order.
         const { data, error } = await supabase
           .from('messages')
           .select('*')
           .eq('channel_id', channel.id)
           .order('created_at', { ascending: false })
-          .range(0, LIMIT - 1);
+          .range(0, MESSAGE_PAGE_SIZE - 1);
 
         if (error) {
           console.error('Failed to fetch messages', error);
@@ -572,6 +840,8 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
 
         const msgs = Array.isArray(data) ? (data as Message[]).slice().reverse() : (data as Message[]);
         setMessages(msgs as Message[]);
+        setHasOlderMessages((data as Message[]).length >= MESSAGE_PAGE_SIZE);
+        setRenderWindowSize(Math.max(INITIAL_RENDER_WINDOW, msgs.length));
 
         // Populate usersMap for senders found in the fetched messages
         const senderIds = Array.from(new Set(msgs.map(m => m.sender_id).filter(Boolean)));
@@ -629,12 +899,20 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
     const fetchMentions = async () => {
       const { data } = await supabase.rpc('get_mentions_for_user', { p_user_id: user.id });
       const map: Record<string, boolean> = {};
+      const unread: Record<string, string[]> = {};
       if (data) {
         (data as any[]).forEach((m) => {
-          if (m.channel_id === channel.id) map[m.message_id] = true;
+          if (m.channel_id === channel.id) {
+            map[m.message_id] = true;
+            if (!m.is_read) {
+              if (!unread[m.message_id]) unread[m.message_id] = [];
+              unread[m.message_id].push(m.mention_id);
+            }
+          }
         });
       }
       setMyMentions(map);
+      setUnreadMentionMap(unread);
     };
 
     fetchMentions();
@@ -645,6 +923,10 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
         const newRow = (payload as any).new as any;
         if (newRow && newRow.message_id && newRow.channel_id === channel.id) {
           setMyMentions(prev => ({ ...prev, [newRow.message_id]: true }));
+          setUnreadMentionMap(prev => ({
+            ...prev,
+            [newRow.message_id]: [...(prev[newRow.message_id] || []), newRow.id],
+          }));
         }
       })
       .subscribe();
@@ -674,7 +956,10 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
         },
         async (payload: any) => {
           const newMsg = (payload as any).new as Message;
-          setMessages(prev => [...prev, newMsg]);
+          setMessages(prev => {
+            if (prev.some(m => m.id === newMsg.id)) return prev;
+            return [...prev, newMsg];
+          });
 
           // Fetch sender if not cached
           if (!usersMap[newMsg.sender_id]) {
@@ -735,14 +1020,63 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
 
   // Auto-scroll on new messages
   useEffect(() => {
+    if (skipAutoScrollRef.current) {
+      skipAutoScrollRef.current = false;
+      return;
+    }
     scrollToBottom();
   }, [messages, scrollToBottom]);
+
+  const loadOlderMessages = async () => {
+    if (!channel || loadingOlderMessages || !hasOlderMessages || messages.length === 0) return;
+    const oldest = messages[0];
+    if (!oldest?.created_at) return;
+    setLoadingOlderMessages(true);
+    try {
+      const { data, error } = await supabase
+        .from('messages')
+        .select('*')
+        .eq('channel_id', channel.id)
+        .lt('created_at', oldest.created_at)
+        .order('created_at', { ascending: false })
+        .range(0, MESSAGE_PAGE_SIZE - 1);
+      if (error) {
+        console.error('Failed to load older messages', error);
+        return;
+      }
+      const older = (data || []) as Message[];
+      if (older.length === 0) {
+        setHasOlderMessages(false);
+        return;
+      }
+      const olderAsc = older.slice().reverse();
+      skipAutoScrollRef.current = true;
+      setMessages(prev => {
+        const existing = new Set(prev.map(m => m.id));
+        const merged = [...olderAsc.filter(m => !existing.has(m.id)), ...prev];
+        return merged;
+      });
+      setRenderWindowSize(prev => prev + olderAsc.length);
+      setHasOlderMessages(older.length >= MESSAGE_PAGE_SIZE);
+    } catch (e) {
+      console.error('Failed to load older messages', e);
+    } finally {
+      setLoadingOlderMessages(false);
+    }
+  };
+
+  useEffect(() => {
+    const sync = () => setNotificationPrefs(getNotificationPreferences());
+    window.addEventListener(NOTIFICATION_PREFS_EVENT, sync as EventListener);
+    return () => window.removeEventListener(NOTIFICATION_PREFS_EVENT, sync as EventListener);
+  }, []);
 
   // Typing indicator via Broadcast
   useEffect(() => {
     if (!channel || !user) return;
 
     const typingChannel = supabase.channel(`typing:${channel.id}`);
+    typingChannelRef.current = typingChannel;
 
     typingChannel
       .on('broadcast', { event: 'typing' }, (payload: any) => {
@@ -750,30 +1084,54 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
         if (user_id === user.id) return; // ignore own typing
 
         setTypingUsers(prev => {
-          // Clear previous timer for this user
-          if (prev[user_id]?.timer) clearTimeout(prev[user_id].timer);
-          // Set new timer to remove after 3s
-          const timer = setTimeout(() => {
-            setTypingUsers(p => {
-              const next = { ...p };
-              delete next[user_id];
-              return next;
-            });
-          }, 3000);
-          return { ...prev, [user_id]: { name: user_name, timer } };
+          return { ...prev, [user_id]: { name: user_name, lastSeen: Date.now() } };
         });
       })
       .subscribe();
 
-    return () => {
-      supabase.removeChannel(typingChannel);
-      // Clean up all timers
+    const cleanupInterval = setInterval(() => {
+      const now = Date.now();
       setTypingUsers(prev => {
-        Object.values(prev).forEach(v => clearTimeout(v.timer));
-        return {};
+        const next = { ...prev };
+        Object.entries(next).forEach(([uid, value]) => {
+          if (now - value.lastSeen > TYPING_TTL_MS) delete next[uid];
+        });
+        return next;
       });
+    }, 1000);
+
+    return () => {
+      clearInterval(cleanupInterval);
+      supabase.removeChannel(typingChannel);
+      typingChannelRef.current = null;
+      setTypingUsers({});
     };
   }, [channel, user]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!channel || !user || isAnnouncementsView || !isUuid(channel.id)) return;
+    fetchChannelReaders();
+    const sub = supabase
+      .channel(`channel-reads:${channel.id}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'channel_reads', filter: `channel_id=eq.${channel.id}` },
+        () => { fetchChannelReaders(); }
+      )
+      .subscribe();
+    return () => { try { supabase.removeChannel(sub); } catch {} };
+  }, [channel?.id, user?.id, isAnnouncementsView]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // While actively viewing a channel, keep read cursor fresh so "Seen by" updates.
+  useEffect(() => {
+    if (!channel || !user || isAnnouncementsView || !isUuid(channel.id)) return;
+    const t = setTimeout(() => {
+      supabase.rpc('mark_channel_read', { p_user_id: user.id, p_channel_id: channel.id }).then(() => {
+        fetchChannelReaders();
+      }).catch(() => {});
+    }, 250);
+    return () => clearTimeout(t);
+  }, [messages.length, channel?.id, user?.id, isAnnouncementsView]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Presence tracking - show who's viewing this channel
   useEffect(() => {
@@ -790,22 +1148,39 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
       .on('presence', { event: 'sync' }, () => {
         const state = presenceChannel.presenceState();
         const activeUsers = Object.values(state).flat() as any[];
-        console.log('Channel presence sync:', activeUsers);
-        
-        setActiveUsersInChannel(
-          activeUsers.map((presence: any) => ({
-            id: presence.user_id || user.id,
-            name: presence.user_name || user.name,
-            is_online: presence.is_online !== false,
-          }))
-        );
+        const now = Date.now();
+        const nextMeta: Record<string, { id: string; name: string; lastSeen: number }> = {};
+
+        activeUsers.forEach((presence: any) => {
+          const id = presence.user_id || user.id;
+          const name = presence.user_name || user.name;
+          const ts = presence.last_seen || presence.timestamp || presence.online_at;
+          const lastSeen = ts ? new Date(ts).getTime() : now;
+          nextMeta[id] = { id, name, lastSeen };
+        });
+
+        presenceMetaRef.current = nextMeta;
+        const smoothed = Object.values(nextMeta)
+          .filter((p) => now - p.lastSeen <= PRESENCE_STALE_MS)
+          .map((p) => ({ id: p.id, name: p.name, is_online: true }));
+        setActiveUsersInChannel(smoothed);
       })
       .on('presence', { event: 'join' }, ({ key, newPresences }: any) => {
-        console.log('User joined presence:', key, newPresences);
+        const now = Date.now();
+        const first = Array.isArray(newPresences) ? newPresences[0] : null;
+        presenceMetaRef.current[key] = {
+          id: first?.user_id || key,
+          name: first?.user_name || key,
+          lastSeen: now,
+        };
         setOnlineUsers(prev => new Set([...prev, key]));
       })
       .on('presence', { event: 'leave' }, ({ key, leftPresences }: any) => {
-        console.log('User left presence:', key, leftPresences);
+        const prevMeta = presenceMetaRef.current[key];
+        if (prevMeta) {
+          // Smooth leave transitions to avoid instant flicker/offline.
+          presenceMetaRef.current[key] = { ...prevMeta, lastSeen: Date.now() - (PRESENCE_STALE_MS - 5000) };
+        }
         setOnlineUsers(prev => {
           const next = new Set(prev);
           next.delete(key);
@@ -820,13 +1195,36 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
             user_name: user.name,
             is_online: true,
             timestamp: new Date().toISOString(),
+            last_seen: new Date().toISOString(),
           });
+
+          if (presenceHeartbeatRef.current) clearInterval(presenceHeartbeatRef.current);
+          presenceHeartbeatRef.current = setInterval(() => {
+            presenceChannel.track({
+              user_id: user.id,
+              user_name: user.name,
+              is_online: true,
+              timestamp: new Date().toISOString(),
+              last_seen: new Date().toISOString(),
+            });
+
+            const now = Date.now();
+            const smoothed = Object.values(presenceMetaRef.current)
+              .filter((p) => now - p.lastSeen <= PRESENCE_STALE_MS)
+              .map((p) => ({ id: p.id, name: p.name, is_online: true }));
+            setActiveUsersInChannel(smoothed);
+          }, PRESENCE_HEARTBEAT_MS) as any;
         }
       });
 
     return () => {
+      if (presenceHeartbeatRef.current) {
+        clearInterval(presenceHeartbeatRef.current);
+        presenceHeartbeatRef.current = null;
+      }
       presenceChannel.untrack();
       supabase.removeChannel(presenceChannel);
+      presenceMetaRef.current = {};
     };
   }, [channel, user]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -879,16 +1277,16 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
 
   const broadcastTyping = () => {
     if (!channel || !user) return;
-    // Throttle: only send every 2s
+    // Throttle typing broadcasts for smoother indicators.
     if (typingTimeoutRef.current) return;
-    supabase.channel(`typing:${channel.id}`).send({
+    typingChannelRef.current?.send({
       type: 'broadcast',
       event: 'typing',
       payload: { user_id: user.id, user_name: user.name },
     });
     typingTimeoutRef.current = setTimeout(() => {
       typingTimeoutRef.current = null;
-    }, 2000);
+    }, 1200);
   };
 
   const handlePaste = async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
@@ -1319,6 +1717,106 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
   const handleSend = async (e?: React.FormEvent) => {
     try { if (e && typeof (e as any).preventDefault === 'function') (e as any).preventDefault(); } catch (err) {}
     if ((!text.trim() && !attachment && !fileAttachment) || !channel || !user || sending) return;
+    if (!isAnnouncementsView && !canPostInChannel) {
+      setAttachmentError(postingRestrictionReason || 'You do not have permission to post in this channel.');
+      return;
+    }
+
+    const sendSignature = `${channel.id}::${text.trim()}::${fileAttachment?.name || ''}::${attachment?.url || ''}`;
+    const nowMs = Date.now();
+    if (sendGuardRef.current && sendGuardRef.current.signature === sendSignature && (nowMs - sendGuardRef.current.at) < 800) {
+      return;
+    }
+    sendGuardRef.current = { signature: sendSignature, at: nowMs };
+    const normalized = text.trim().toLowerCase().replace(/\s+/g, ' ');
+
+    // Block known high-risk keyword phrases (first-layer client moderation).
+    if (normalized.length > 0) {
+      const matchedKeyword = BLOCKED_KEYWORDS.find((k) => normalized.includes(k));
+      if (matchedKeyword) {
+        setAttachmentError(`Message blocked by safety policy: contains restricted term "${matchedKeyword}".`);
+        try {
+          await fetch('/api/compliance/log-file-operation', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'moderation_block',
+              fileName: 'chat-message',
+              fileSize: normalized.length,
+              fileType: 'text/plain',
+              channelId: channel.id,
+              status: 'blocked_keyword',
+            }),
+          });
+        } catch (e) {}
+        return;
+      }
+    }
+
+    // Burst limiter.
+    const now = Date.now();
+    sendHistoryRef.current = sendHistoryRef.current.filter((r) => now - r.at <= SEND_RATE_WINDOW_MS);
+    if (sendHistoryRef.current.length >= SEND_RATE_MAX) {
+      setAttachmentError('You are sending too fast. Please wait a few seconds.');
+      try {
+        await fetch('/api/compliance/log-file-operation', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'rate_limit',
+            fileName: 'chat-message',
+            fileSize: normalized.length,
+            fileType: 'text/plain',
+            channelId: channel.id,
+            status: 'throttled',
+          }),
+        });
+      } catch (e) {}
+      return;
+    }
+
+    // Duplicate spam detector.
+    const duplicatesRecent = sendHistoryRef.current.filter((r) => now - r.at <= DUPLICATE_SPAM_WINDOW_MS && r.textSig === normalized);
+    if (normalized && duplicatesRecent.length >= DUPLICATE_SPAM_MAX) {
+      setAttachmentError('Duplicate message detected. Please vary content before sending again.');
+      try {
+        await fetch('/api/compliance/log-file-operation', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'duplicate_spam',
+            fileName: 'chat-message',
+            fileSize: normalized.length,
+            fileType: 'text/plain',
+            channelId: channel.id,
+            status: 'blocked_duplicate',
+          }),
+        });
+      } catch (e) {}
+      return;
+    }
+
+    sendHistoryRef.current.push({ at: now, textSig: normalized });
+
+    // Enforce admin timeout/mute before sending.
+    try {
+      const { data: profile, error: profileErr } = await supabase
+        .from('users')
+        .select('muted_until, muted_reason')
+        .eq('id', user.id)
+        .maybeSingle();
+      if (!profileErr && profile?.muted_until) {
+        setMuteState({ mutedUntil: (profile as any).muted_until || null, reason: (profile as any).muted_reason || null });
+        const mutedUntilMs = new Date((profile as any).muted_until as string).getTime();
+        if (!Number.isNaN(mutedUntilMs) && mutedUntilMs > Date.now()) {
+          const mins = Math.ceil((mutedUntilMs - Date.now()) / 60000);
+          setAttachmentError(`You are temporarily muted for ${mins} more minute(s). ${(profile as any).muted_reason ? `Reason: ${(profile as any).muted_reason}` : ''}`.trim());
+          return;
+        }
+      }
+    } catch (e) {
+      // If moderation columns are not deployed yet, do not block send.
+    }
 
     setSending(true);
     // If user opted to check before send, run checks and stop send if suggestions exist
@@ -1393,6 +1891,31 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
       attachmentName = attachment.isImage ? 'Image' : 'Link';
     }
 
+    const clientId = `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const retryPayload: RetryPayload = {
+      channel_id: channel.id,
+      sender_id: user.id,
+      text: messageText || null,
+      attachment_url: attachmentUrl,
+      attachment_name: attachmentName,
+      attachment_size: attachmentSize,
+      reply_to_id: replyTo?.id || null,
+      mentionSelectedIds: [...(mentionSelectedIds || [])],
+    };
+    const optimisticMsg: Message = {
+      id: clientId,
+      channel_id: channel.id,
+      sender_id: user.id,
+      text: messageText || null,
+      attachment_url: attachmentUrl,
+      attachment_name: attachmentName,
+      attachment_size: attachmentSize,
+      reply_to_id: replyTo?.id || null,
+      created_at: new Date().toISOString(),
+    } as Message;
+    setMessages(prev => [...prev, optimisticMsg]);
+    setMessageDelivery(prev => ({ ...prev, [clientId]: { status: 'sending', retryPayload } }));
+
     const { data: insertedMsg, error: insertError } = await supabase
       .from('messages')
       .insert({
@@ -1408,9 +1931,25 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
       .single();
 
     if (insertError || !insertedMsg) {
+      setAttachmentError((insertError as any)?.message || 'Failed to send message. Please retry.');
+      setMessageDelivery(prev => ({
+        ...prev,
+        [clientId]: {
+          status: 'failed',
+          error: (insertError as any)?.message || 'Failed to send',
+          retryPayload,
+        },
+      }));
       setSending(false);
       return;
     }
+
+    setMessages(prev => prev.map(m => (m.id === clientId ? (insertedMsg as Message) : m)));
+    setMessageDelivery(prev => {
+      const next = { ...prev };
+      delete next[clientId];
+      return next;
+    });
 
     // Log attachment upload if file was attached
     if (attachmentUrl && attachmentName && fileAttachment) {
@@ -1455,31 +1994,33 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
 
     // Create mention rows via RPC. Prefer explicit IDs collected from selection for reliability.
     try {
-      if (mentionSelectedIds && mentionSelectedIds.length > 0) {
-        console.log('Creating mentions by ids:', mentionSelectedIds);
-        const { data, error } = await supabase.rpc('create_message_mentions_by_ids', { p_message_id: insertedMsg.id, p_user_ids: mentionSelectedIds });
+      const validMentionIds = (mentionSelectedIds || []).filter((id) => typeof id === 'string' && isUuid(id));
+      if (validMentionIds.length > 0) {
+        console.log('Creating mentions by ids:', validMentionIds);
+        const { data, error } = await supabase.rpc('create_message_mentions_by_ids', { p_message_id: insertedMsg.id, p_user_ids: validMentionIds });
         if (error) {
-          console.error('Error creating mentions by ids:', error);
+          console.warn('Error creating mentions by ids, will fallback to names:', error);
         } else {
           console.log('Mentions created successfully (by ids):', data);
+          return;
         }
-      } else {
-        // Fallback: detect simple @name mentions and create mention rows via name-based RPC
-        const mentionRegex = /@([^\s@,!.?:;]+)/g;
-        const names: string[] = [];
-        let m;
-        // eslint-disable-next-line no-cond-assign
-        while ((m = mentionRegex.exec(messageText)) !== null) {
-          names.push(m[1]);
-        }
-        if (names.length > 0) {
-          console.log('Creating mentions for names (fallback):', names);
-          const { data, error } = await supabase.rpc('create_message_mentions', { p_message_id: insertedMsg.id, p_names: names });
-          if (error) {
-            console.error('Error creating mentions (names):', error);
-          } else {
-            console.log('Mentions created successfully (names):', data);
-          }
+      }
+
+      // Fallback: detect simple @name mentions and create mention rows via name-based RPC
+      const mentionRegex = /@([^\s@,!.?:;]+)/g;
+      const names: string[] = [];
+      let m;
+      // eslint-disable-next-line no-cond-assign
+      while ((m = mentionRegex.exec(messageText)) !== null) {
+        names.push(m[1]);
+      }
+      if (names.length > 0) {
+        console.log('Creating mentions for names (fallback):', names);
+        const { data, error } = await supabase.rpc('create_message_mentions', { p_message_id: insertedMsg.id, p_names: names });
+        if (error) {
+          console.warn('Error creating mentions (names):', error);
+        } else {
+          console.log('Mentions created successfully (names):', data);
         }
       }
     } catch (e) {
@@ -1494,6 +2035,85 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
     setAttachmentError('');
     setReplyTo(null);
     setSending(false);
+  };
+
+  const retryFailedMessage = async (messageId: string) => {
+    const delivery = messageDelivery[messageId];
+    const payload = delivery?.retryPayload;
+    if (!payload || sending) return;
+
+    setMessageDelivery(prev => ({ ...prev, [messageId]: { ...prev[messageId], status: 'sending', error: undefined } }));
+    try {
+      const { data: insertedMsg, error: insertError } = await supabase
+        .from('messages')
+        .insert({
+          channel_id: payload.channel_id,
+          sender_id: payload.sender_id,
+          text: payload.text,
+          attachment_url: payload.attachment_url,
+          attachment_name: payload.attachment_name,
+          attachment_size: payload.attachment_size,
+          reply_to_id: payload.reply_to_id,
+        })
+        .select('*')
+        .single();
+
+      if (insertError || !insertedMsg) {
+        setMessageDelivery(prev => ({
+          ...prev,
+          [messageId]: {
+            ...prev[messageId],
+            status: 'failed',
+            error: (insertError as any)?.message || 'Retry failed',
+          },
+        }));
+        return;
+      }
+
+      try {
+        const validMentionIds = (payload.mentionSelectedIds || []).filter((id) => typeof id === 'string' && isUuid(id));
+        if (validMentionIds.length > 0) {
+          await supabase.rpc('create_message_mentions_by_ids', { p_message_id: insertedMsg.id, p_user_ids: validMentionIds });
+        }
+      } catch (e) {
+        console.warn('Retry mention creation failed:', e);
+      }
+
+      setMessages(prev => prev.map(m => (m.id === messageId ? (insertedMsg as Message) : m)));
+      setMessageDelivery(prev => {
+        const next = { ...prev };
+        delete next[messageId];
+        return next;
+      });
+    } catch (e: any) {
+      setMessageDelivery(prev => ({
+        ...prev,
+        [messageId]: {
+          ...prev[messageId],
+          status: 'failed',
+          error: e?.message || 'Retry failed',
+        },
+      }));
+    }
+  };
+
+  const jumpToFirstUnreadMention = async () => {
+    const entries = Object.entries(unreadMentionMap);
+    if (entries.length === 0) return;
+    const [messageId, mentionIds] = entries[0];
+    scrollToMessage(messageId);
+    setSearchResults([messageId]);
+    setActiveSearchIndex(0);
+    try {
+      await Promise.all((mentionIds || []).map((mid) => supabase.rpc('mark_mention_read', { p_mention_id: mid })));
+      setUnreadMentionMap(prev => {
+        const next = { ...prev };
+        delete next[messageId];
+        return next;
+      });
+    } catch (e) {
+      console.warn('Failed to mark mention as read:', e);
+    }
   };
 
   // Mention helpers - improved matching (token startsWith, substring, email, initials)
@@ -1691,9 +2311,12 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
   };
 
   // Group messages by date
+  const visibleMessages = !isAnnouncementsView
+    ? messages.slice(Math.max(0, messages.length - renderWindowSize))
+    : messages;
   const groupedMessages: { date: string; messages: Message[] }[] = [];
   let currentDate = '';
-  messages.forEach(msg => {
+  visibleMessages.forEach(msg => {
     const date = formatMessageDate(msg.created_at);
     if (date !== currentDate) {
       currentDate = date;
@@ -1739,10 +2362,10 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
   }
 
   return (
-    <div className="chat-area flex-1 flex flex-col bg-background min-w-0" onClick={() => showEmojiFor && setShowEmojiFor(null)}>
+    <div className="chat-area flex-1 flex flex-col bg-background min-w-0" onClick={() => { if (showEmojiFor) setShowEmojiFor(null); if (openSeenByFor) setOpenSeenByFor(null); if (openMessageSeenByFor) setOpenMessageSeenByFor(null); }}>
       {/* Channel header */}
       <div className="channel-header">
-        <div className="flex items-center gap-2 min-w-0">
+        <div className="flex items-center gap-2 min-w-0 flex-1">
           <button
             onClick={() => onToggleSidebar && onToggleSidebar()}
             className="p-2 rounded-xl md:hidden text-muted hover:text-primary hover:bg-primary-light transition-all duration-200 shrink-0"
@@ -1751,52 +2374,127 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
             <Menu className="w-5 h-5" />
           </button>
           <div className="w-8 h-8 rounded-lg gradient-primary flex items-center justify-center shrink-0">
-            <Hash className="w-4 h-4 text-white" />
+            {isAnnouncementsView ? (
+              <Megaphone className="w-4 h-4 text-white" />
+            ) : (
+              <Hash className="w-4 h-4 text-white" />
+            )}
           </div>
           <h2 className="font-semibold text-foreground truncate text-[15px]">{channel.name}</h2>
+          {!isAnnouncementsView && (
+            <span className="hidden sm:inline-flex px-2 py-0.5 rounded-full border border-border text-[10px] text-muted whitespace-nowrap">
+              {postingModeLabel}
+            </span>
+          )}
         </div>
-        <div className="flex items-center gap-0.5">
+        <div className="flex items-center gap-1 min-w-0 shrink-0">
           {/* Search */}
-          <div className="relative hidden sm:block">
+          <div className="relative shrink-0 min-w-[96px] w-28 sm:w-36 md:w-44">
             <input
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  if (searchResults.length === 0) return;
+                  if (e.shiftKey) {
+                    const prev = (activeSearchIndex - 1 + searchResults.length) % searchResults.length;
+                    setActiveSearchIndex(prev);
+                    scrollToMessage(searchResults[prev]);
+                  } else {
+                    const next = (activeSearchIndex + 1) % searchResults.length;
+                    setActiveSearchIndex(next);
+                    scrollToMessage(searchResults[next]);
+                  }
+                }
+              }}
               onFocus={() => setSearchFocused(true)}
               onBlur={() => setTimeout(() => setSearchFocused(false), 180)}
               placeholder="Search..."
-              className="chat-input-field !py-1.5 !px-3 !text-xs w-32 focus:w-44 transition-all duration-300 !rounded-full"
+              className="chat-input-field !py-1.5 !pl-8 !pr-2 !text-xs w-full !rounded-full"
             />
-            <Search className="absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted" />
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted pointer-events-none" />
           </div>
           {(searchFocused || searchQuery.trim().length > 0) && (
-            <div className="flex items-center gap-0.5 animate-fade-in">
+            <div className="hidden md:flex items-center gap-0.5 animate-fade-in">
+              <div className="hidden lg:flex items-center gap-1 mr-1">
+                {(['all', 'messages', 'files', 'mentions'] as const).map((f) => (
+                  <button
+                    key={f}
+                    onClick={() => setSearchFilter(f)}
+                    className={`px-1.5 py-1 rounded-lg text-[10px] capitalize transition-colors ${
+                      searchFilter === f
+                        ? 'bg-primary/10 text-primary border border-primary/20'
+                        : 'text-muted hover:text-foreground hover:bg-surface-hover border border-transparent'
+                    }`}
+                  >
+                    {f === 'all' ? 'All' : f === 'messages' ? 'Messages' : f === 'files' ? 'Files' : 'Mentions'}
+                  </button>
+                ))}
+              </div>
               <button onClick={() => { if (searchResults.length === 0) return; const prev = (activeSearchIndex - 1 + searchResults.length) % searchResults.length; setActiveSearchIndex(prev); scrollToMessage(searchResults[prev]); }} className="p-1.5 rounded-lg text-muted hover:text-foreground hover:bg-surface-hover" title="Previous">◀</button>
               <button onClick={() => { if (searchResults.length === 0) return; const next = (activeSearchIndex + 1) % searchResults.length; setActiveSearchIndex(next); scrollToMessage(searchResults[next]); }} className="p-1.5 rounded-lg text-muted hover:text-foreground hover:bg-surface-hover" title="Next">▶</button>
               <span className="text-[10px] text-muted px-1">{searchResults.length > 0 ? `${activeSearchIndex + 1}/${searchResults.length}` : '0/0'}</span>
             </div>
           )}
-          <button onClick={() => { const next = !muted; setMuted(next); try { localStorage.setItem('asiteam_muted', next ? '1' : '0'); } catch (e) {} }} title={muted ? 'Unmute' : 'Mute'} className="p-2 rounded-xl text-muted hover:text-foreground hover:bg-surface-hover transition-all duration-200 hidden sm:flex">
+          <button onClick={() => { const next = !muted; setMuted(next); try { localStorage.setItem('asiteam_muted', next ? '1' : '0'); } catch (e) {} }} title={muted ? 'Unmute' : 'Mute'} className="p-2 rounded-xl text-muted hover:text-foreground hover:bg-surface-hover transition-all duration-200 hidden lg:flex">
             {muted ? <BellOff className="w-4 h-4" /> : <Bell className="w-4 h-4" />}
           </button>
-          <button onClick={startCall} className={`p-2 rounded-xl transition-all duration-200 hidden sm:flex ${inCall ? 'bg-success/10 text-success' : 'text-muted hover:text-foreground hover:bg-surface-hover'}`} title="Video call">
+          <button onClick={startCall} className={`p-2 rounded-xl transition-all duration-200 hidden lg:flex ${inCall ? 'bg-success/10 text-success' : 'text-muted hover:text-foreground hover:bg-surface-hover'}`} title="Video call">
             <Video className="w-4 h-4" />
           </button>
-          <button onClick={() => setShowChannelMembersManager(true)} className="p-2 rounded-xl text-muted hover:text-secondary hover:bg-secondary-light transition-all duration-200 hidden sm:flex" title="Manage members">
+          <button onClick={() => setShowChannelMembersManager(true)} className="p-2 rounded-xl text-muted hover:text-secondary hover:bg-secondary-light transition-all duration-200 hidden lg:flex" title="Manage members">
             <Users className="w-4 h-4" />
           </button>
+          {Object.keys(unreadMentionMap).length > 0 && (
+            <button
+              onClick={jumpToFirstUnreadMention}
+              className="p-2 rounded-xl text-accent hover:text-accent hover:bg-accent-light transition-all duration-200"
+              title="Jump to unread mention"
+            >
+              <AtSign className="w-4 h-4" />
+            </button>
+          )}
           <button onClick={onToggleMembers} className={`p-2 rounded-xl transition-all duration-200 ${showMembers ? 'bg-primary/10 text-primary' : 'text-muted hover:text-foreground hover:bg-surface-hover'}`} title="Members">
             <Eye className="w-4 h-4" />
           </button>
-          <button onClick={() => setShowChannelFilesManager(true)} className="p-2 rounded-xl text-muted hover:text-accent hover:bg-accent-light transition-all duration-200 hidden sm:flex" title="Files">
+          <button onClick={() => setShowChannelFilesManager(true)} className="p-2 rounded-xl text-muted hover:text-accent hover:bg-accent-light transition-all duration-200 hidden lg:flex" title="Files">
             <FileText className="w-4 h-4" />
           </button>
-          {isAnnouncementsView && (user?.role === 'admin' || user?.role === 'tl') && (
+          {!isAnnouncementsView && canCreateAnnouncement && (
+            <button onClick={() => setShowCreateAnnouncementModal(true)} className="p-2 rounded-xl text-muted hover:text-foreground hover:bg-surface-hover transition-all duration-200" title="Create announcement for this channel">
+              <Megaphone className="w-4 h-4" />
+            </button>
+          )}
+          {isAnnouncementsView && canCreateAnnouncement && (
             <button onClick={() => setShowCreateAnnouncementModal(true)} className="p-2 rounded-xl text-muted hover:text-foreground hover:bg-surface-hover transition-all duration-200" title="Post announcement">
-              <Bell className="w-4 h-4" />
+              <Megaphone className="w-4 h-4" />
             </button>
           )}
         </div>
       </div>
+
+      {/* Pinned messages bar */}
+      {!isAnnouncementsView && channel?.campaign_id && (
+        <div className="px-4 py-2 border-b border-border bg-primary/5 flex items-center justify-between">
+          <div className="text-xs text-muted">
+            This channel follows campaign announcements
+            {typeof channelAnnouncementCount === 'number' ? ` (${channelAnnouncementCount})` : ''}
+          </div>
+          <button
+            onClick={() => {
+              try {
+                window.dispatchEvent(
+                  new CustomEvent('openAnnouncementsCampaign', { detail: { campaignId: channel.campaign_id } })
+                );
+              } catch {}
+            }}
+            className="text-xs px-2 py-1 rounded-md bg-primary/10 text-primary hover:bg-primary/20"
+          >
+            Open Announcements
+          </button>
+        </div>
+      )}
 
       {/* Pinned messages bar */}
       {pinnedMessages.length > 0 && (
@@ -1845,21 +2543,89 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
       <div className="messages-scroll-area flex-1 overflow-y-auto px-4 py-2 sm:pb-4 pb-32">
         {isAnnouncementsView ? (
           <div>
-            {announcements.length === 0 ? (
+            <div className="mb-3 flex items-center gap-2">
+              {(['all', 'campaign', 'channel'] as const).map((f) => (
+                <button
+                  key={f}
+                  onClick={() => setAnnouncementScopeFilter(f)}
+                  className={`px-2 py-1 rounded-lg text-xs border ${
+                    announcementScopeFilter === f
+                      ? 'bg-primary/10 text-primary border-primary/20'
+                      : 'text-muted border-border hover:bg-surface-hover'
+                  }`}
+                >
+                  {f === 'all' ? 'All' : f === 'campaign' ? 'Campaign-wide' : 'Channel-only'}
+                </button>
+              ))}
+            </div>
+            {announcements.filter((a) => announcementScopeFilter === 'all' ? true : announcementScopeFilter === 'campaign' ? !a.channel_id : !!a.channel_id).length === 0 ? (
               <div className="px-4 py-6 text-center text-sm text-muted">No announcements yet</div>
             ) : (
-              announcements.map((a) => (
+              announcements
+                .filter((a) => announcementScopeFilter === 'all' ? true : announcementScopeFilter === 'campaign' ? !a.channel_id : !!a.channel_id)
+                .map((a) => (
                 <div key={a.id} className="mb-4 px-3 py-3 bg-surface border border-border rounded-xl">
                   {a.image_url && (
                     <div className="mb-3">
-                      <img src={a.image_url} alt={a.title || 'Announcement image'} className="w-full max-h-64 object-cover rounded-md" />
+                      <img src={a.image_url} alt={a.title || 'Announcement image'} className="w-full max-h-44 object-contain rounded-md bg-surface-hover" />
                     </div>
                   )}
                   {a.title && <div className="font-semibold text-foreground mb-1">{a.title}</div>}
+                  <div className="mb-2">
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] border border-primary/20 bg-primary/10 text-primary">
+                      Audience: {a.audience_label || (a.channel_id ? 'Channel' : `All ${channel?.name || 'campaign'}`)}
+                    </span>
+                  </div>
                   <div className="text-sm text-foreground whitespace-pre-wrap">{a.body}</div>
                       <div className="flex items-center justify-between mt-3">
-                        <div className="text-xs text-muted">Posted {new Date(a.created_at).toLocaleString()} by {a.created_by_name || a.created_by}</div>
+                        <div className="text-xs text-muted relative">
+                          Posted {new Date(a.created_at).toLocaleString()} by {a.created_by_name || a.created_by}
+                          {canViewAnnouncementReadStats ? (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setOpenSeenByFor((prev) => (prev === a.id ? null : a.id));
+                              }}
+                              className="ml-1 underline decoration-dotted cursor-pointer"
+                            >
+                              {`• Seen by ${a.seen_count || 0}`}
+                            </button>
+                          ) : ''}
+                          {!canViewAnnouncementReadStats ? ` • ${a.is_read ? 'Read' : 'Unread'}` : ''}
+                          {canViewAnnouncementReadStats && openSeenByFor === a.id && (
+                            <div
+                              className="absolute left-0 top-full mt-1 z-30 w-64 max-h-44 overflow-auto rounded-lg border border-border bg-surface shadow-lg p-2"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <div className="text-[11px] font-semibold text-foreground mb-1">Seen by</div>
+                              {a.seen_by_names && a.seen_by_names.length > 0 ? (
+                                <ul className="space-y-1">
+                                  {a.seen_by_names.map((n, idx) => (
+                                    <li key={`${a.id}-seen-${idx}`} className="text-xs text-muted flex items-center gap-2">
+                                      <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-primary/10 text-primary text-[10px] font-semibold">
+                                        {(n || '?').charAt(0).toUpperCase()}
+                                      </span>
+                                      <span className="truncate">{n}</span>
+                                    </li>
+                                  ))}
+                                </ul>
+                              ) : (
+                                <div className="text-xs text-muted">No readers yet</div>
+                              )}
+                            </div>
+                          )}
+                        </div>
                         <div className="flex items-center gap-2">
+                          {user?.role === 'admin' && (
+                            <button
+                              onClick={() => deleteAnnouncement(a.id)}
+                              className="inline-flex items-center justify-center p-1.5 rounded-md text-muted hover:text-danger hover:bg-danger/10"
+                              title="Delete announcement"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          )}
                           {(a.reactions || []).map((r: any) => (
                             <button key={r.emoji} onClick={() => toggleAnnouncementReaction(a.id, r.emoji)} className="inline-flex items-center gap-1 px-2 py-1 rounded-full bg-surface-hover border border-border text-sm">
                               <span>{r.emoji}</span>
@@ -1877,9 +2643,42 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
                 </div>
               ))
             )}
+            {announcementsHasMore && (
+              <div className="flex justify-center mt-2">
+                <button
+                  onClick={() => loadAnnouncements({ reset: false })}
+                  disabled={announcementsLoading}
+                  className="px-3 py-1.5 rounded-lg text-xs border border-border bg-surface hover:bg-surface-hover disabled:opacity-50"
+                >
+                  {announcementsLoading ? 'Loading...' : 'Load more'}
+                </button>
+              </div>
+            )}
           </div>
         ) : (
-          groupedMessages.map((group, gi) => {
+          <>
+          {hasOlderMessages && (
+            <div className="flex justify-center py-2">
+              <button
+                onClick={loadOlderMessages}
+                disabled={loadingOlderMessages}
+                className="px-3 py-1.5 text-xs rounded-lg border border-border bg-surface hover:bg-surface-hover disabled:opacity-60"
+              >
+                {loadingOlderMessages ? 'Loading older messages...' : 'Load older messages'}
+              </button>
+            </div>
+          )}
+          {messages.length > visibleMessages.length && (
+            <div className="flex justify-center pb-2">
+              <button
+                onClick={() => setRenderWindowSize(prev => prev + MESSAGE_PAGE_SIZE)}
+                className="px-3 py-1 text-[11px] rounded-lg border border-border text-muted hover:text-foreground hover:bg-surface-hover"
+              >
+                Show more loaded messages ({messages.length - visibleMessages.length} hidden)
+              </button>
+            </div>
+          )}
+          {groupedMessages.map((group, gi) => {
             return (
               <div key={gi}>
                 {/* Date separator */}
@@ -1898,6 +2697,7 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
                   const replyMsg = msg.reply_to_id ? messages.find(m => m.id === msg.reply_to_id) : null;
                   const replySender = replyMsg ? usersMap[replyMsg.sender_id] : null;
                   const msgReactions = reactions[msg.id] || [];
+                  const delivery = messageDelivery[msg.id];
 
                   return (
                     <div
@@ -2199,6 +2999,24 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
                             )}
                           </>
                         )}
+                        {/* Delivery state for optimistic outgoing messages */}
+                        {isOwn && delivery && (
+                          <div className={`mt-1 text-[11px] ${isOwn ? 'text-right' : ''}`}>
+                            {delivery.status === 'sending' && <span className="text-muted">Sending...</span>}
+                            {delivery.status === 'failed' && (
+                              <span className="text-danger">
+                                Failed
+                                <button
+                                  onClick={() => retryFailedMessage(msg.id)}
+                                  className="ml-2 underline hover:no-underline"
+                                >
+                                  Retry
+                                </button>
+                              </span>
+                            )}
+                          </div>
+                        )}
+
                         {/* Reactions display */}
                         {msgReactions.length > 0 && (
                           <div className={`flex flex-wrap gap-1 mt-1 ${isOwn ? 'justify-end' : ''}`}>
@@ -2243,15 +3061,36 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
                           );
                           if (seenUsers.length === 0) return null;
                           return (
-                            <div className="flex items-center gap-1.5 mt-1.5 text-[11px] text-muted">
+                            <div className="relative flex items-center gap-1.5 mt-1.5 text-[11px] text-muted">
                               <Eye className="w-3 h-3" />
-                              <span>
-                                Seen by{' '}
-                                {seenUsers.length <= 3
-                                  ? seenUsers.map(u => u.user_name).join(', ')
-                                  : `${seenUsers.slice(0, 2).map(u => u.user_name).join(', ')} and ${seenUsers.length - 2} more`
-                                }
-                              </span>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setOpenMessageSeenByFor(prev => (prev === msg.id ? null : msg.id));
+                                }}
+                                className="underline decoration-dotted"
+                              >
+                                Seen by {seenUsers.length}
+                              </button>
+                              {openMessageSeenByFor === msg.id && (
+                                <div
+                                  className="absolute left-0 top-full mt-1 z-30 w-56 max-h-40 overflow-auto rounded-lg border border-border bg-surface shadow-lg p-2"
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  <div className="text-[11px] font-semibold text-foreground mb-1">Seen by</div>
+                                  <ul className="space-y-1">
+                                    {seenUsers.map((u, idx) => (
+                                      <li key={`${msg.id}-seen-${u.user_id}-${idx}`} className="text-xs text-muted flex items-center gap-2">
+                                        <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-primary/10 text-primary text-[10px] font-semibold">
+                                          {(u.user_name || '?').charAt(0).toUpperCase()}
+                                        </span>
+                                        <span className="truncate">{u.user_name}</span>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              )}
                             </div>
                           );
                         })()}
@@ -2268,13 +3107,31 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
                 })}
               </div>
             );
-          })
+          })}
+          </>
         )}
         <div ref={messagesEndRef} />
       </div>
 
       {/* Input area */}
       <div className="chat-input-container shrink-0">
+        {(() => {
+          if (!muteState.mutedUntil) return null;
+          const ms = new Date(muteState.mutedUntil).getTime() - nowTick;
+          if (Number.isNaN(ms) || ms <= 0) return null;
+          const mins = Math.floor(ms / 60000);
+          const secs = Math.floor((ms % 60000) / 1000);
+          return (
+            <div className="mb-2 px-3 py-2 bg-danger/10 text-danger text-xs rounded-xl border border-danger/20 animate-fade-in">
+              Muted: {mins}:{secs.toString().padStart(2, '0')} remaining {muteState.reason ? `- ${muteState.reason}` : ''}
+            </div>
+          );
+        })()}
+        {!isAnnouncementsView && !canPostInChannel && (
+          <div className="mb-2 px-3 py-2 bg-warning/10 text-warning text-xs rounded-xl border border-warning/20 animate-fade-in">
+            {postingRestrictionReason}
+          </div>
+        )}
         {/* Typing indicator */}
         {Object.keys(typingUsers).length > 0 && (
           <div className="mb-2 flex items-center gap-2 text-xs text-muted animate-fade-in">
@@ -2451,7 +3308,12 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
             </button>
             <button
               type="submit"
-              disabled={(!text.trim() && !attachment && !fileAttachment) || sending}
+              disabled={
+                (!text.trim() && !attachment && !fileAttachment) ||
+                sending ||
+                !canPostInChannel ||
+                (muteState.mutedUntil ? new Date(muteState.mutedUntil).getTime() > nowTick : false)
+              }
               className="p-2.5 btn-primary rounded-xl disabled:opacity-40 disabled:cursor-not-allowed disabled:shadow-none disabled:transform-none shrink-0"
             >
               {sending ? (
@@ -2553,18 +3415,30 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
       )}
 
       {/* Create Announcement Modal */}
-      {isAnnouncementsView && (
+      {showCreateAnnouncementModal && (
         <CreateAnnouncementModal
           isOpen={showCreateAnnouncementModal}
-          campaignId={channel!.id.split(':')[1]}
+          campaignId={announcementsCampaignId || ''}
+          initialChannelId={!isAnnouncementsView && channel && isUuid(channel.id) ? channel.id : undefined}
           onClose={() => setShowCreateAnnouncementModal(false)}
-          onCreated={async () => {
+          onCreated={async (created) => {
+            const targetCampaignId = created?.campaign_id || announcementsCampaignId;
+            if (targetCampaignId && targetCampaignId !== announcementsCampaignId) {
+              try {
+                window.dispatchEvent(
+                  new CustomEvent('openAnnouncementsCampaign', { detail: { campaignId: targetCampaignId } })
+                );
+              } catch {}
+              return;
+            }
             // refresh announcements
             try {
-              const campaignId = channel!.id.split(':')[1];
-              const res = await fetch(`/api/announcements?campaign_id=${encodeURIComponent(campaignId)}`);
-              const j = await res.json();
-              if (res.ok) setAnnouncements(j.data || []);
+              const campaignId = targetCampaignId;
+              if (!campaignId) return;
+              setAnnouncements([]);
+              setAnnouncementsHasMore(false);
+              setAnnouncementsOffset(0);
+              await loadAnnouncements({ reset: true });
             } catch (e) { console.error(e); }
           }}
         />
@@ -2572,3 +3446,4 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
     </div>
   );
 }
+

@@ -25,11 +25,15 @@ interface MemberWithStatus extends User {
   status_changed_at?: string;
 }
 
+const PRESENCE_STALE_MS = 45000;
+const PRESENCE_HEARTBEAT_MS = 15000;
+
 export function MemberList({ channel }: MemberListProps) {
   const { user: currentUser } = useAuth();
   const [members, setMembers] = useState<MemberWithStatus[]>([]);
   const [activeInChannel, setActiveInChannel] = useState<Set<string>>(new Set());
   const [statusTimestamps, setStatusTimestamps] = useState<Record<string, { timestamp: number; is_online: boolean }>>({});
+  const [, setPresenceTick] = useState(0);
   const supabase = createClient();
 
   useEffect(() => {
@@ -94,16 +98,37 @@ export function MemberList({ channel }: MemberListProps) {
       config: { presence: { key: currentUser?.id } },
     });
 
+    let campaignHeartbeat: NodeJS.Timeout | null = null;
+    let channelHeartbeat: NodeJS.Timeout | null = null;
+    const campaignPresenceMeta = new Map<string, { last_seen?: string; online_at?: string; devicePlatform?: string; ip?: string }>();
+
     campaignPresence
       .on('presence', { event: 'sync' }, () => {
         const state = campaignPresence.presenceState();
         const now = Date.now();
-        const onlineIds = new Set(Object.keys(state));
-        
+        const onlineIds = new Set(
+          Object.entries(state)
+            .filter(([, presences]) => {
+              const p = (presences?.[0] as any) || {};
+              const ts = p.last_seen || p.online_at;
+              if (!ts) return true;
+              return now - new Date(ts).getTime() <= PRESENCE_STALE_MS;
+            })
+            .map(([id]) => id)
+        );
+
         setMembers(prev => {
           const updated = prev.map(m => {
             const isOnline = onlineIds.has(m.id);
             const presenceData = state[m.id]?.[0] as any;
+            if (presenceData) {
+              campaignPresenceMeta.set(m.id, {
+                last_seen: presenceData?.last_seen,
+                online_at: presenceData?.online_at,
+                devicePlatform: presenceData?.devicePlatform,
+                ip: presenceData?.ip,
+              });
+            }
             return {
               ...m,
               is_online: isOnline,
@@ -138,15 +163,15 @@ export function MemberList({ channel }: MemberListProps) {
         const offlineUser = members.find(m => m.id === key);
         if (offlineUser) {
           try {
-            await supabase
-              .from('users')
-              .update({ is_online: false, last_offline_at: new Date().toISOString() })
-              .eq('id', offlineUser.id);
-            
-            setStatusTimestamps(ts => ({
-              ...ts,
-              [offlineUser.id]: { timestamp: Date.now(), is_online: false },
-            }));
+            // Smooth leave events: do not force immediate offline update.
+            setStatusTimestamps(ts => {
+              const prev = ts[offlineUser.id];
+              const base = prev?.timestamp || Date.now();
+              return {
+                ...ts,
+                [offlineUser.id]: { timestamp: base, is_online: false },
+              };
+            });
           } catch (err) {
             console.log('Could not mark user offline:', err);
           }
@@ -168,6 +193,22 @@ export function MemberList({ channel }: MemberListProps) {
               devicePlatform,
               ip,
             });
+
+            if (campaignHeartbeat) clearInterval(campaignHeartbeat);
+            campaignHeartbeat = setInterval(async () => {
+              try {
+                await campaignPresence.track({
+                  user_id: currentUser.id,
+                  online_at: new Date().toISOString(),
+                  last_seen: new Date().toISOString(),
+                  devicePlatform,
+                  ip,
+                });
+                setPresenceTick(v => v + 1);
+              } catch (e) {
+                // ignore transient heartbeat failures
+              }
+            }, PRESENCE_HEARTBEAT_MS);
           } catch (err) {
             console.log('Presence track (campaign) error:', err);
           }
@@ -190,8 +231,16 @@ export function MemberList({ channel }: MemberListProps) {
     channelPresence
       .on('presence', { event: 'sync' }, () => {
         const state = channelPresence.presenceState();
+        const now = Date.now();
         const viewingIds = new Set(
-          Object.values(state).flat().map((p: any) => p.user_id || currentUser?.id)
+          Object.values(state)
+            .flat()
+            .filter((p: any) => {
+              const ts = p?.last_seen || p?.timestamp;
+              if (!ts) return true;
+              return now - new Date(ts).getTime() <= PRESENCE_STALE_MS;
+            })
+            .map((p: any) => p.user_id || currentUser?.id)
         );
         setActiveInChannel(viewingIds);
       })
@@ -208,9 +257,27 @@ export function MemberList({ channel }: MemberListProps) {
               user_id: currentUser.id,
               user_name: currentUser.name,
               timestamp: new Date().toISOString(),
+              last_seen: new Date().toISOString(),
               devicePlatform,
               ip,
             });
+
+            if (channelHeartbeat) clearInterval(channelHeartbeat);
+            channelHeartbeat = setInterval(async () => {
+              try {
+                await channelPresence.track({
+                  user_id: currentUser.id,
+                  user_name: currentUser.name,
+                  timestamp: new Date().toISOString(),
+                  last_seen: new Date().toISOString(),
+                  devicePlatform,
+                  ip,
+                });
+                setPresenceTick(v => v + 1);
+              } catch (e) {
+                // ignore transient heartbeat failures
+              }
+            }, PRESENCE_HEARTBEAT_MS);
           } catch (err) {
             console.log('Presence track (channel) error:', err);
           }
@@ -218,6 +285,8 @@ export function MemberList({ channel }: MemberListProps) {
       });
 
     return () => {
+      if (campaignHeartbeat) clearInterval(campaignHeartbeat);
+      if (channelHeartbeat) clearInterval(channelHeartbeat);
       campaignPresence.untrack();
       supabase.removeChannel(campaignPresence);
       channelPresence.untrack();
@@ -311,10 +380,15 @@ export function MemberList({ channel }: MemberListProps) {
                   </div>
                   <div className="min-w-0 flex-1">
                     <p className="text-sm text-foreground truncate font-medium">{member.name}</p>
-                    <div className="flex items-center gap-1.5">
+                    <div className="flex items-center gap-1.5 flex-wrap">
                       <span className={`text-[10px] px-1.5 py-0.5 rounded-md font-medium border ${getRoleBadgeStyle(member.role)}`}>
                         {getRoleLabel(member.role)}
                       </span>
+                      {!!member.position_prefix && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded-md font-medium border bg-primary/10 text-primary border-primary/20 max-w-[140px] truncate">
+                          {member.position_prefix}
+                        </span>
+                      )}
                       {statusDuration && (
                         <span className="flex items-center gap-0.5 text-[10px] text-primary/80">
                           <Clock className="w-2.5 h-2.5" />
@@ -358,6 +432,11 @@ export function MemberList({ channel }: MemberListProps) {
                       <span className={`text-[10px] px-1.5 py-0.5 rounded-md font-medium opacity-60 border ${getRoleBadgeStyle(member.role)}`}>
                         {getRoleLabel(member.role)}
                       </span>
+                      {!!member.position_prefix && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded-md font-medium border opacity-70 bg-primary/10 text-primary border-primary/20 max-w-[140px] truncate">
+                          {member.position_prefix}
+                        </span>
+                      )}
                       {statusDuration && (
                         <span className="flex items-center gap-0.5 text-[10px] text-muted/60 whitespace-nowrap">
                           <Clock className="w-2.5 h-2.5" />

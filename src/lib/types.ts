@@ -6,6 +6,7 @@ export interface User {
   id: string;
   email: string;
   name: string;
+  position_prefix?: string | null;
   role: UserRole;
   campaign_id: string | null;
   status: UserStatus;
@@ -32,6 +33,7 @@ export interface Channel {
   campaign_id: string;
   created_by: string | null;
   created_at: string;
+  posting_mode?: 'all' | 'leaders_only' | 'admin_only';
 }
 
 export interface Message {
@@ -62,6 +64,8 @@ export interface Reaction {
 export interface Announcement {
   id: string;
   campaign_id: string;
+  channel_id?: string | null;
+  audience_label?: string | null;
   title?: string | null;
   body: string;
   created_by: string;
@@ -69,6 +73,9 @@ export interface Announcement {
   image_url?: string | null;
   created_by_name?: string | null;
   reactions?: AnnouncementReaction[];
+  seen_count?: number;
+  is_read?: boolean;
+  seen_by_names?: string[];
 }
 
 export interface AnnouncementReaction {

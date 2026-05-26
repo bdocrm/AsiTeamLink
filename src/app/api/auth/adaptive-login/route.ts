@@ -23,6 +23,7 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const { action, email, password, otp: otpCode, user_id } = body;
+    const normalizedEmail = String(email || '').trim().toLowerCase();
 
     console.log(`[Adaptive Login] Action: ${action}, Email: ${email}`);
     console.log(`[Adaptive Login] Request body:`, JSON.stringify(body, null, 2));
@@ -61,13 +62,13 @@ export async function POST(request: NextRequest) {
     // ============ ACTION: Check Device Trust ============
     if (action === 'check_device') {
       console.log(`[Check Device] Starting password verification for ${email}`);
-      if (!email || !password) {
+      if (!normalizedEmail || !password) {
         return NextResponse.json({ error: 'Email and password required' }, { status: 400 });
       }
 
       // Verify password WITHOUT creating a session (session will be created on frontend after OTP)
       const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
-        email,
+        email: normalizedEmail,
         password,
       });
 
@@ -88,10 +89,13 @@ export async function POST(request: NextRequest) {
           user_agent: userAgent,
           attempt_type: 'password',
           success: false,
-          reason: 'invalid_password',
+          reason: authError?.message || 'invalid_password',
         });
 
-        return NextResponse.json({ error: 'Invalid email or password' }, { status: 401 });
+        return NextResponse.json(
+          { error: authError?.message || 'Invalid email or password' },
+          { status: 401 }
+        );
       }
 
       const userId = authData.user.id;
@@ -193,7 +197,7 @@ export async function POST(request: NextRequest) {
           console.log('Transporter created, using email from request...');
           
           // Use email from the login request (already have it)
-          const userEmail = email;
+          const userEmail = normalizedEmail;
           console.log(`Sending OTP to ${userEmail}...`);
           
           // Get user name if possible (for personalization)
@@ -269,7 +273,7 @@ export async function POST(request: NextRequest) {
     if (action === 'verify_otp') {
       console.log('[Verify OTP] Starting verification', { email, otpCode, user_id });
       
-      if (!email || !otpCode || otpCode.length !== 6 || !user_id) {
+      if (!normalizedEmail || !otpCode || otpCode.length !== 6 || !user_id) {
         console.log('[Verify OTP] Invalid parameters:', { email: !!email, otpCode: !!otpCode, length: otpCode?.length, user_id: !!user_id });
         return NextResponse.json({ error: 'Invalid request parameters' }, { status: 400 });
       }
@@ -382,7 +386,7 @@ export async function POST(request: NextRequest) {
 
     // ============ ACTION: Resend OTP ============
     if (action === 'resend_otp') {
-      if (!email || !user_id) {
+      if (!normalizedEmail || !user_id) {
         return NextResponse.json({ error: 'Email and user_id required' }, { status: 400 });
       }
 
@@ -415,7 +419,7 @@ export async function POST(request: NextRequest) {
           },
         });
 
-        console.log(`[Resend OTP] Sending code to ${email}...`);
+        console.log(`[Resend OTP] Sending code to ${normalizedEmail}...`);
         
         // Get user name if possible (for personalization)
         let userName = 'User';
@@ -434,7 +438,7 @@ export async function POST(request: NextRequest) {
 
         const mailResult = await transporter.sendMail({
           from: `${process.env.SMTP_FROM_NAME} <${process.env.SMTP_FROM_EMAIL}>`,
-          to: email,
+          to: normalizedEmail,
           subject: 'Verification Code - AsiTeamLink',
           html: `
             <h2>Login Verification Code</h2>

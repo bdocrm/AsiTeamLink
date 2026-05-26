@@ -31,23 +31,48 @@ export async function POST(req: Request) {
 
     const adminSupabase = createAdminClient();
 
-    // Check if user already reacted with this emoji on this announcement
-    const { data: existing, error: existingErr } = await adminSupabase.from('announcements_reactions').select('*').eq('announcement_id', announcement_id).eq('user_id', currentUser.id).eq('emoji', emoji).maybeSingle();
+    // Messenger/Discord-like behavior: one active reaction per user per announcement.
+    // If same emoji clicked -> remove reaction. If different emoji clicked -> replace existing with new one.
+    const { data: existingRows, error: existingErr } = await adminSupabase
+      .from('announcements_reactions')
+      .select('id,emoji')
+      .eq('announcement_id', announcement_id)
+      .eq('user_id', currentUser.id);
     if (existingErr) {
-      console.error('Failed checking existing reaction:', existingErr);
+      console.error('Failed checking existing reactions:', existingErr);
       return NextResponse.json({ error: existingErr.message || 'DB error' }, { status: 500 });
     }
 
-    if (existing) {
-      // remove
-      const { error: delErr } = await adminSupabase.from('announcements_reactions').delete().eq('id', existing.id);
+    const alreadySame = (existingRows || []).some((r: any) => r.emoji === emoji);
+
+    if (alreadySame) {
+      // Toggle off: remove all existing reactions by this user on this announcement
+      const { error: delErr } = await adminSupabase
+        .from('announcements_reactions')
+        .delete()
+        .eq('announcement_id', announcement_id)
+        .eq('user_id', currentUser.id);
       if (delErr) {
         console.error('Failed to delete reaction:', delErr);
         return NextResponse.json({ error: delErr.message || 'Failed to delete reaction' }, { status: 500 });
       }
     } else {
-      // insert
-      const { data: ins, error: insErr } = await adminSupabase.from('announcements_reactions').insert({ announcement_id, user_id: currentUser.id, emoji }).select().single();
+      // Replace: clear old reaction(s) first, then set new emoji
+      const { error: clearErr } = await adminSupabase
+        .from('announcements_reactions')
+        .delete()
+        .eq('announcement_id', announcement_id)
+        .eq('user_id', currentUser.id);
+      if (clearErr) {
+        console.error('Failed to clear existing reactions:', clearErr);
+        return NextResponse.json({ error: clearErr.message || 'Failed to update reaction' }, { status: 500 });
+      }
+
+      const { data: ins, error: insErr } = await adminSupabase
+        .from('announcements_reactions')
+        .insert({ announcement_id, user_id: currentUser.id, emoji })
+        .select()
+        .single();
       if (insErr) {
         console.error('Failed to insert reaction:', insErr);
         return NextResponse.json({ error: insErr.message || 'Failed to insert reaction' }, { status: 500 });

@@ -29,6 +29,23 @@ export default function ChatPage() {
     return () => window.removeEventListener('resize', check);
   }, []);
 
+  useEffect(() => {
+    const handler = (ev: Event) => {
+      const detail = (ev as CustomEvent<{ campaignId?: string }>).detail;
+      const campaignId = detail?.campaignId;
+      if (!campaignId) return;
+      setSelectedChannel({
+        id: `announcements:${campaignId}`,
+        name: 'Announcements',
+        campaign_id: campaignId,
+        created_by: null,
+        created_at: new Date().toISOString(),
+      } as Channel);
+    };
+    window.addEventListener('openAnnouncementsCampaign', handler as EventListener);
+    return () => window.removeEventListener('openAnnouncementsCampaign', handler as EventListener);
+  }, []);
+
   const handleToggleSidebar = useCallback(() => {
     if (isMobile) {
       setSidebarDrawerOpen(prev => !prev);
