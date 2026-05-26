@@ -25,6 +25,16 @@ interface MemberWithStatus extends User {
   status_changed_at?: string;
 }
 
+interface PresenceMeta {
+  user_id?: string;
+  user_name?: string;
+  last_seen?: string;
+  online_at?: string;
+  timestamp?: string;
+  devicePlatform?: string;
+  ip?: string;
+}
+
 const PRESENCE_STALE_MS = 45000;
 const PRESENCE_HEARTBEAT_MS = 15000;
 
@@ -104,12 +114,12 @@ export function MemberList({ channel }: MemberListProps) {
 
     campaignPresence
       .on('presence', { event: 'sync' }, () => {
-        const state = campaignPresence.presenceState();
+        const state = campaignPresence.presenceState() as Record<string, PresenceMeta[]>;
         const now = Date.now();
         const onlineIds = new Set(
           Object.entries(state)
             .filter(([, presences]) => {
-              const p = (presences?.[0] as any) || {};
+              const p = presences?.[0] || {};
               const ts = p.last_seen || p.online_at;
               if (!ts) return true;
               return now - new Date(ts).getTime() <= PRESENCE_STALE_MS;
@@ -120,7 +130,7 @@ export function MemberList({ channel }: MemberListProps) {
         setMembers(prev => {
           const updated = prev.map(m => {
             const isOnline = onlineIds.has(m.id);
-            const presenceData = state[m.id]?.[0] as any;
+            const presenceData = state[m.id]?.[0];
             if (presenceData) {
               campaignPresenceMeta.set(m.id, {
                 last_seen: presenceData?.last_seen,
@@ -144,7 +154,7 @@ export function MemberList({ channel }: MemberListProps) {
             updated.forEach(m => {
               const oldStatus = prev.find(p => p.id === m.id)?.is_online;
               const newStatus = m.is_online;
-              const presenceData = state[m.id]?.[0] as any;
+              const presenceData = state[m.id]?.[0];
               
               if (!ts[m.id] || oldStatus !== newStatus) {
                 const statusTime = newStatus
@@ -159,7 +169,7 @@ export function MemberList({ channel }: MemberListProps) {
           return updated;
         });
       })
-      .on('presence', { event: 'leave' }, async ({ key }: any) => {
+      .on('presence', { event: 'leave' }, async ({ key }: { key: string }) => {
         const offlineUser = members.find(m => m.id === key);
         if (offlineUser) {
           try {
@@ -177,7 +187,7 @@ export function MemberList({ channel }: MemberListProps) {
           }
         }
       })
-      .subscribe(async (status: any) => {
+      .subscribe(async (status: string) => {
         if (status === 'SUBSCRIBED' && currentUser) {
           try {
             const ua = typeof navigator !== 'undefined' ? navigator.userAgent : '';
@@ -230,21 +240,21 @@ export function MemberList({ channel }: MemberListProps) {
 
     channelPresence
       .on('presence', { event: 'sync' }, () => {
-        const state = channelPresence.presenceState();
+        const state = channelPresence.presenceState() as Record<string, PresenceMeta[]>;
         const now = Date.now();
         const viewingIds = new Set(
           Object.values(state)
             .flat()
-            .filter((p: any) => {
+            .filter((p: PresenceMeta) => {
               const ts = p?.last_seen || p?.timestamp;
               if (!ts) return true;
               return now - new Date(ts).getTime() <= PRESENCE_STALE_MS;
             })
-            .map((p: any) => p.user_id || currentUser?.id)
+            .map((p: PresenceMeta) => p.user_id || currentUser?.id)
         );
         setActiveInChannel(viewingIds);
       })
-      .subscribe(async (status: any) => {
+      .subscribe(async (status: string) => {
         if (status === 'SUBSCRIBED' && currentUser) {
           try {
             const ua = typeof navigator !== 'undefined' ? navigator.userAgent : '';
