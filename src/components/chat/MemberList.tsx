@@ -30,6 +30,7 @@ interface PresenceMeta {
   user_name?: string;
   last_seen?: string;
   online_at?: string;
+  status_changed_at?: string;
   timestamp?: string;
   devicePlatform?: string;
   ip?: string;
