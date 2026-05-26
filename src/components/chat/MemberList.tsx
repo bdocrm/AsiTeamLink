@@ -243,7 +243,7 @@ export function MemberList({ channel }: MemberListProps) {
       .on('presence', { event: 'sync' }, () => {
         const state = channelPresence.presenceState() as Record<string, PresenceMeta[]>;
         const now = Date.now();
-        const viewingIds = new Set(
+        const viewingIds = new Set<string>(
           Object.values(state)
             .flat()
             .filter((p: PresenceMeta) => {
@@ -252,6 +252,7 @@ export function MemberList({ channel }: MemberListProps) {
               return now - new Date(ts).getTime() <= PRESENCE_STALE_MS;
             })
             .map((p: PresenceMeta) => p.user_id || currentUser?.id)
+            .filter((id): id is string => Boolean(id))
         );
         setActiveInChannel(viewingIds);
       })
