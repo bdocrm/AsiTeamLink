@@ -29,6 +29,34 @@ import {
   type NotificationPreferences,
 } from '@/lib/notificationPreferences';
 
+const POSITION_PREFIX_OPTIONS = [
+  'TRAINER',
+  'PAYROLL STAFF',
+  'STATUTORY STAFF',
+  'DTR STAFF',
+  'FINANCE STAFF',
+  'PURCHASING STAFF',
+  'TA ADMIN',
+  'TA SPECIALIST',
+  'HR GENERALIST',
+  'CLINIC ASSISTANT',
+  'HR ADMIN',
+  'PREMISES ADMIN',
+  'OFFICER IN CHARGE',
+  'APS',
+  'COMPLIANCE STAFF',
+  'OIC - COMPLIANCE',
+  'IT STAFF',
+  'SMT ASSISTANT',
+  'SENIOR WEB DEVELOPER',
+  'WEB DEVELOPER',
+  'AI RESEARCHER',
+  'GRAPHIC ARTIST',
+  'OIC - APS',
+  'OIC - BDO QA',
+  'OIC - BPI QA',
+];
+
 export default function SettingsPage() {
   const { user, refreshUser } = useAuth();
   const { preference, setPreference } = useTheme();
@@ -43,6 +71,9 @@ export default function SettingsPage() {
   const [notificationPrefs, setNotificationPrefs] = useState<NotificationPreferences>(() => getNotificationPreferences());
   const [myChannels, setMyChannels] = useState<Channel[]>([]);
   const [showAupModal, setShowAupModal] = useState(false);
+  const currentPositionPrefix = positionPrefix.trim();
+  const hasCustomPositionPrefix =
+    currentPositionPrefix !== '' && !POSITION_PREFIX_OPTIONS.includes(currentPositionPrefix);
 
   const handleSaveName = async () => {
     if (!name.trim() || !user) return;
@@ -239,14 +270,21 @@ export default function SettingsPage() {
 
             <div>
               <label className="block text-sm font-medium text-foreground mb-1.5">Position Prefix (Badge)</label>
-              <input
-                type="text"
+              <select
                 value={positionPrefix}
                 onChange={(e) => setPositionPrefix(e.target.value)}
-                maxLength={40}
-                placeholder="e.g. Team Leader, Business Dev Lead"
                 className="w-full px-3 py-2 bg-background border border-border rounded-lg text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition-colors"
-              />
+              >
+                <option value="">No badge</option>
+                {hasCustomPositionPrefix && (
+                  <option value={positionPrefix}>{positionPrefix}</option>
+                )}
+                {POSITION_PREFIX_OPTIONS.map((prefix) => (
+                  <option key={prefix} value={prefix}>
+                    {prefix}
+                  </option>
+                ))}
+              </select>
               <p className="text-xs text-muted mt-1">This badge appears to members in the user list.</p>
               <div className="mt-3">
                 <button

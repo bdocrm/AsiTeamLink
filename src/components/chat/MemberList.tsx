@@ -309,24 +309,6 @@ export function MemberList({ channel }: MemberListProps) {
   const onlineMembers = members.filter(m => m.is_online);
   const offlineMembers = members.filter(m => !m.is_online);
 
-  const getRoleBadgeStyle = (role: string) => {
-    switch (role) {
-      case 'admin': return 'bg-danger/10 text-danger border-danger/20';
-      case 'manager': return 'bg-secondary-light text-secondary border-secondary/20';
-      case 'tl': return 'bg-accent-light text-accent border-accent/20';
-      default: return 'bg-surface-hover text-muted border-border';
-    }
-  };
-
-  const getRoleLabel = (role: string) => {
-    switch (role) {
-      case 'admin': return 'Admin';
-      case 'manager': return 'Manager';
-      case 'tl': return 'TL';
-      default: return 'Agent';
-    }
-  };
-
   const formatDuration = (ms: number): string => {
     const seconds = Math.floor(ms / 1000);
     const minutes = Math.floor(seconds / 60);
@@ -393,9 +375,6 @@ export function MemberList({ channel }: MemberListProps) {
                   <div className="min-w-0 flex-1">
                     <p className="text-sm text-foreground truncate font-medium">{member.name}</p>
                     <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className={`text-[10px] px-1.5 py-0.5 rounded-md font-medium border ${getRoleBadgeStyle(member.role)}`}>
-                        {getRoleLabel(member.role)}
-                      </span>
                       {!!member.position_prefix && (
                         <span className="text-[10px] px-1.5 py-0.5 rounded-md font-medium border bg-primary/10 text-primary border-primary/20 max-w-[140px] truncate">
                           {member.position_prefix}
@@ -441,9 +420,6 @@ export function MemberList({ channel }: MemberListProps) {
                   <div className="min-w-0 flex-1">
                     <p className="text-sm text-foreground/60 truncate">{member.name}</p>
                     <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className={`text-[10px] px-1.5 py-0.5 rounded-md font-medium opacity-60 border ${getRoleBadgeStyle(member.role)}`}>
-                        {getRoleLabel(member.role)}
-                      </span>
                       {!!member.position_prefix && (
                         <span className="text-[10px] px-1.5 py-0.5 rounded-md font-medium border opacity-70 bg-primary/10 text-primary border-primary/20 max-w-[140px] truncate">
                           {member.position_prefix}

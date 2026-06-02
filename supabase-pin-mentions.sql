@@ -34,6 +34,14 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_mentions_unique ON message_mentions(messag
 ALTER TABLE pinned_messages DISABLE ROW LEVEL SECURITY;
 ALTER TABLE message_mentions DISABLE ROW LEVEL SECURITY;
 
+-- Drop RPCs first so the migration can update return table definitions.
+DROP FUNCTION IF EXISTS public.toggle_pin(uuid, uuid);
+DROP FUNCTION IF EXISTS public.get_pinned_for_channel(uuid);
+DROP FUNCTION IF EXISTS public.create_message_mentions(uuid, text[]);
+DROP FUNCTION IF EXISTS public.get_mentions_for_user(uuid);
+DROP FUNCTION IF EXISTS public.mark_mention_read(uuid);
+DROP FUNCTION IF EXISTS public.create_message_mentions_by_ids(uuid, uuid[]);
+
 -- RPC: Toggle pin for a message (pin/unpin)
 CREATE OR REPLACE FUNCTION toggle_pin(p_message_id uuid, p_user_id uuid)
 RETURNS json

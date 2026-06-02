@@ -19,7 +19,7 @@ import {
   Reply,
   SmilePlus,
   Eye,
-  MapPin,
+  Pin,
   AtSign,
   Edit,
   Trash2,
@@ -63,6 +63,61 @@ interface RetryPayload {
   attachment_size: number | null;
   reply_to_id: string | null;
   mentionSelectedIds: string[];
+}
+
+interface PinnedMessageItem {
+  pin_id: string;
+  message_id: string;
+  pinned_by: string | null;
+  pinned_by_name: string | null;
+  pinned_at: string | null;
+  message_text: string | null;
+  sender_id: string | null;
+}
+
+interface PinnedRpcRow {
+  pin_id?: string | null;
+  id?: string | null;
+  message_id?: string | null;
+  pinned_by?: string | null;
+  pinned_by_name?: string | null;
+  pinned_at?: string | null;
+  message_text?: string | null;
+  sender_id?: string | null;
+}
+
+interface PinnedTableRow {
+  id: string;
+  message_id: string;
+  pinned_by: string | null;
+  pinned_at: string | null;
+}
+
+interface PinnedMessageLookupRow {
+  id: string;
+  text: string | null;
+  sender_id: string | null;
+}
+
+interface PinnedUserLookupRow {
+  id: string;
+  name: string | null;
+}
+
+const PIN_SETUP_REQUIRED_MESSAGE = 'Pin messages is not enabled yet. Run supabase-pin-mentions.sql in your Supabase SQL editor, then reload this page.';
+
+function isPinInfraMissingError(rawMessage?: string | null): boolean {
+  if (!rawMessage) return false;
+  const message = rawMessage.toLowerCase();
+  const mentionsPinnedTable = message.includes('pinned_messages');
+  const mentionsPinFunction = message.includes('toggle_pin') || message.includes('get_pinned_for_channel');
+  const hasMissingSignal =
+    message.includes('could not find the table') ||
+    message.includes('could not find the function') ||
+    message.includes('does not exist') ||
+    message.includes('schema cache');
+
+  return (mentionsPinnedTable || mentionsPinFunction) && hasMissingSignal;
 }
 
 function formatFileSize(bytes: number): string {
@@ -192,7 +247,8 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
   const [hoveredReaction, setHoveredReaction] = useState<string | null>(null);
   const [openSeenByFor, setOpenSeenByFor] = useState<string | null>(null);
   const [openMessageSeenByFor, setOpenMessageSeenByFor] = useState<string | null>(null);
-  const [pinnedMessages, setPinnedMessages] = useState<any[]>([]);
+  const [pinnedMessages, setPinnedMessages] = useState<PinnedMessageItem[]>([]);
+  const [pinFeatureUnavailable, setPinFeatureUnavailable] = useState(false);
   const [showPinnedPanel, setShowPinnedPanel] = useState(false);
   const [myMentions, setMyMentions] = useState<Record<string, boolean>>({});
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
@@ -246,6 +302,8 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
   const typingChannelRef = useRef<any>(null);
   const presenceHeartbeatRef = useRef<NodeJS.Timeout | null>(null);
   const presenceMetaRef = useRef<Record<string, { id: string; name: string; lastSeen: number }>>({});
+  const pinUnavailableAlertedRef = useRef(false);
+  const pinUnavailableWarnedRef = useRef(false);
   const sendGuardRef = useRef<{ signature: string; at: number } | null>(null);
   const sendHistoryRef = useRef<{ at: number; textSig: string }[]>([]);
   const skipAutoScrollRef = useRef(false);
@@ -259,6 +317,112 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, []);
+
+  const disablePinFeature = useCallback((reason?: string | null) => {
+    setPinFeatureUnavailable(true);
+    setPinnedMessages([]);
+    setShowPinnedPanel(false);
+    if (!pinUnavailableWarnedRef.current) {
+      console.warn('Pin messages feature unavailable:', reason || 'Missing Supabase pin table/RPC setup');
+      pinUnavailableWarnedRef.current = true;
+    }
+  }, []);
+
+  const refreshPinnedMessages = useCallback(async (): Promise<PinnedMessageItem[]> => {
+    if (pinFeatureUnavailable || !channel || channel.id?.startsWith?.('announcements:') || !isUuid(channel.id)) {
+      setPinnedMessages([]);
+      return [];
+    }
+
+    const { data, error } = await supabase.rpc('get_pinned_for_channel', { p_channel_id: channel.id });
+    if (!error && Array.isArray(data)) {
+      const normalized = (data as PinnedRpcRow[]).map((row) => ({
+        pin_id: String(row.pin_id ?? row.id ?? row.message_id ?? ''),
+        message_id: String(row.message_id ?? ''),
+        pinned_by: row.pinned_by ?? null,
+        pinned_by_name: row.pinned_by_name ?? null,
+        pinned_at: row.pinned_at ?? null,
+        message_text: row.message_text ?? null,
+        sender_id: row.sender_id ?? null,
+      })).filter((row) => row.pin_id && row.message_id);
+      setPinnedMessages(normalized);
+      return normalized;
+    }
+
+    const rpcMessage = error?.message || '';
+    if (isPinInfraMissingError(rpcMessage)) {
+      disablePinFeature(rpcMessage);
+      return [];
+    }
+
+    console.warn('get_pinned_for_channel RPC failed, falling back to table query:', error?.message || error);
+    const { data: pinRows, error: pinRowsError } = await supabase
+      .from('pinned_messages')
+      .select('id,message_id,pinned_by,pinned_at')
+      .eq('channel_id', channel.id)
+      .order('pinned_at', { ascending: false });
+
+    if (pinRowsError || !pinRows) {
+      if (isPinInfraMissingError(pinRowsError?.message)) {
+        disablePinFeature(pinRowsError?.message);
+        return [];
+      }
+      console.error('Failed to load pinned messages:', pinRowsError?.message || pinRowsError);
+      setPinnedMessages([]);
+      return [];
+    }
+
+    const typedPinRows = pinRows as PinnedTableRow[];
+    const messageIds = Array.from(new Set(typedPinRows.map((row) => row.message_id).filter(Boolean)));
+    const userIds = Array.from(new Set(typedPinRows.map((row) => row.pinned_by).filter(Boolean))) as string[];
+
+    let messagesById: Record<string, { text: string | null; sender_id: string | null }> = {};
+    if (messageIds.length > 0) {
+      const { data: messageRows, error: messageRowsError } = await supabase
+        .from('messages')
+        .select('id,text,sender_id')
+        .in('id', messageIds);
+      if (messageRowsError) {
+        console.warn('Failed to load pinned message text:', messageRowsError.message);
+      } else {
+        messagesById = ((messageRows || []) as PinnedMessageLookupRow[]).reduce((acc, row) => {
+          acc[row.id] = { text: row.text ?? null, sender_id: row.sender_id ?? null };
+          return acc;
+        }, {} as Record<string, { text: string | null; sender_id: string | null }>);
+      }
+    }
+
+    let usersById: Record<string, string> = {};
+    if (userIds.length > 0) {
+      const { data: userRows, error: userRowsError } = await supabase
+        .from('users')
+        .select('id,name')
+        .in('id', userIds);
+      if (userRowsError) {
+        console.warn('Failed to load pin owners:', userRowsError.message);
+      } else {
+        usersById = ((userRows || []) as PinnedUserLookupRow[]).reduce((acc, row) => {
+          acc[row.id] = row.name || 'Unknown';
+          return acc;
+        }, {} as Record<string, string>);
+      }
+    }
+
+    const normalized = typedPinRows
+      .map((row) => ({
+        pin_id: String(row.id ?? ''),
+        message_id: String(row.message_id ?? ''),
+        pinned_by: row.pinned_by ?? null,
+        pinned_by_name: row.pinned_by ? usersById[row.pinned_by] || 'Unknown' : null,
+        pinned_at: row.pinned_at ?? null,
+        message_text: messagesById[row.message_id]?.text ?? null,
+        sender_id: messagesById[row.message_id]?.sender_id ?? null,
+      }))
+      .filter((row) => row.pin_id && row.message_id);
+
+    setPinnedMessages(normalized);
+    return normalized;
+  }, [channel?.id, pinFeatureUnavailable, disablePinFeature]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const fetchChannelReaders = useCallback(async () => {
     if (!channel || !isUuid(channel.id)) {
@@ -781,27 +945,23 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
 
   // Fetch messages
   useEffect(() => {
-    if (!channel) return;
-    if (channel.id?.startsWith?.('announcements:')) return; // skip pinned fetch for announcements pseudo-channel
+    if (!channel || channel.id?.startsWith?.('announcements:') || !isUuid(channel.id)) {
+      setPinnedMessages([]);
+      setShowPinnedPanel(false);
+      return;
+    }
 
-    
-
-    const fetchPinned = async () => {
-      const { data } = await supabase.rpc('get_pinned_for_channel', { p_channel_id: channel.id });
-      if (data) setPinnedMessages(data as any[]);
-    };
-
-    fetchPinned();
+    refreshPinnedMessages();
 
     const pinSub = supabase
       .channel(`pinned:${channel.id}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'pinned_messages', filter: `channel_id=eq.${channel.id}` }, () => {
-        fetchPinned();
+        refreshPinnedMessages();
       })
       .subscribe();
 
     return () => { supabase.removeChannel(pinSub); };
-  }, [channel]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [channel?.id, refreshPinnedMessages]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Initial load: fetch existing messages for the channel so chat persists across reloads
   useEffect(() => {
@@ -1610,12 +1770,72 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
   };
 
   const togglePin = async (messageId: string) => {
-    if (!user) return;
-    await supabase.rpc('toggle_pin', { p_message_id: messageId, p_user_id: user.id });
-    // Refresh pinned list
-    if (channel) {
-      const { data } = await supabase.rpc('get_pinned_for_channel', { p_channel_id: channel.id });
-      if (data) setPinnedMessages(data as any[]);
+    if (!user || !channel || !isUuid(channel.id) || !isUuid(messageId)) return;
+    if (pinFeatureUnavailable) {
+      if (!pinUnavailableAlertedRef.current) {
+        alert(PIN_SETUP_REQUIRED_MESSAGE);
+        pinUnavailableAlertedRef.current = true;
+      }
+      return;
+    }
+
+    const wasPinned = pinnedMessages.some((pm) => pm.message_id === messageId);
+    const { error: rpcError } = await supabase.rpc('toggle_pin', { p_message_id: messageId, p_user_id: user.id });
+
+    if (rpcError) {
+      if (isPinInfraMissingError(rpcError.message)) {
+        disablePinFeature(rpcError.message);
+        if (!pinUnavailableAlertedRef.current) {
+          alert(PIN_SETUP_REQUIRED_MESSAGE);
+          pinUnavailableAlertedRef.current = true;
+        }
+        return;
+      }
+      console.warn('toggle_pin RPC failed, using fallback:', rpcError.message);
+      if (wasPinned) {
+        const { error: fallbackUnpinError } = await supabase
+          .from('pinned_messages')
+          .delete()
+          .eq('message_id', messageId);
+        if (fallbackUnpinError) {
+          if (isPinInfraMissingError(fallbackUnpinError.message)) {
+            disablePinFeature(fallbackUnpinError.message);
+            if (!pinUnavailableAlertedRef.current) {
+              alert(PIN_SETUP_REQUIRED_MESSAGE);
+              pinUnavailableAlertedRef.current = true;
+            }
+            return;
+          }
+          alert('Failed to unpin message: ' + (fallbackUnpinError.message || String(fallbackUnpinError)));
+          return;
+        }
+      } else {
+        const { error: fallbackPinError } = await supabase
+          .from('pinned_messages')
+          .insert({
+            message_id: messageId,
+            channel_id: channel.id,
+            pinned_by: user.id,
+          });
+        if (isPinInfraMissingError(fallbackPinError?.message)) {
+          disablePinFeature(fallbackPinError?.message);
+          if (!pinUnavailableAlertedRef.current) {
+            alert(PIN_SETUP_REQUIRED_MESSAGE);
+            pinUnavailableAlertedRef.current = true;
+          }
+          return;
+        }
+        const isDuplicate = /duplicate|unique/i.test(fallbackPinError?.message || '');
+        if (fallbackPinError && !isDuplicate) {
+          alert('Failed to pin message: ' + (fallbackPinError.message || String(fallbackPinError)));
+          return;
+        }
+      }
+    }
+
+    const updatedPins = await refreshPinnedMessages();
+    if (!wasPinned && updatedPins.some((pm) => pm.message_id === messageId)) {
+      setShowPinnedPanel(true);
     }
   };
 
@@ -2501,7 +2721,7 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
       {pinnedMessages.length > 0 && (
         <div className="px-4 py-2 border-b border-border bg-surface/50 flex items-center justify-between">
           <div className="flex items-center gap-2 text-sm text-muted">
-            <MapPin className="w-4 h-4" />
+            <Pin className="w-4 h-4" />
             <span className="font-medium">Pinned</span>
             <span className="text-xs text-muted">({pinnedMessages.length})</span>
           </div>
@@ -2730,10 +2950,22 @@ export function ChatArea({ channel, showMembers, onToggleMembers, onToggleSideba
                         </button>
                         <button
                           onClick={() => togglePin(msg.id)}
-                          className="p-1 text-muted hover:text-foreground hover:bg-surface-hover rounded transition-colors"
-                          title={isPinned ? 'Unpin' : 'Pin'}
+                          className={`p-1 rounded transition-colors ${
+                            pinFeatureUnavailable
+                              ? 'text-muted/60 cursor-not-allowed'
+                              : isPinned
+                              ? 'text-primary bg-primary/10 hover:bg-primary/20'
+                              : 'text-muted hover:text-foreground hover:bg-surface-hover'
+                          }`}
+                          title={
+                            pinFeatureUnavailable
+                              ? 'Pin messages not configured (run supabase-pin-mentions.sql)'
+                              : (isPinned ? 'Unpin message' : 'Pin message')
+                          }
+                          aria-label={isPinned ? 'Unpin message' : 'Pin message'}
+                          disabled={pinFeatureUnavailable}
                         >
-                          <MapPin className="w-3.5 h-3.5" />
+                          <Pin className="w-3.5 h-3.5" />
                         </button>
                         {(user?.id === msg.sender_id || user?.role === 'admin') && (
                           <>
